@@ -56,8 +56,11 @@ start_session() {
 # Started FIRST, before celery/telegram: those two will happily accept a
 # chat turn the moment they're up, and a turn routed to bonsai2-27b
 # before this is listening just fails.
+# --models-max 1: the router defaults to loading up to FOUR models at
+# once. bonsai2-27b alone is 13,518 MiB of this card's 16,303 MiB, so a
+# second concurrent load has nowhere to go -- pin it to one.
 start_session "llama_server" \
-    "$LLAMA_CPP_DIR/build/bin/llama-server --models-preset $MODELS_PRESET --host 0.0.0.0 --port 8080"
+    "$LLAMA_CPP_DIR/build/bin/llama-server --models-preset $MODELS_PRESET --models-max 1 --host 0.0.0.0 --port 8080"
 start_session "celery_server" \
     "celery -A llm_engine.tasks worker --loglevel=info --concurrency=1 --pool=prefork -Q chat,literature"
 start_session "live_viewer" \
