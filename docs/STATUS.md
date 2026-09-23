@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-09-22
+**Updated:** 2026-09-22 (after `5a9fb9b`)
 
 <!--
 CONVENTION -- read before editing.
@@ -23,19 +23,24 @@ what changed and why (commit messages), the plan (docs/ROADMAP.md).
 
 ## Blocked on a human
 
-- **`git push origin main`** — 6 commits exist on `fuminaba-server` only. `origin` holds the initial commit alone. Nothing else is backed up anywhere.
-- **GitHub rename** `ALiRA2` → `phdcode`, then `git remote set-url origin`. Rename, do not delete and recreate. See [ADR-0014](adr/0014-new-repository-phdcode.md).
-- `gh` CLI is not installed, so the rename needs the web UI.
+Nothing. The repository is renamed, the remote points at `phdcode`, and everything is pushed.
+
+`gh` CLI is not installed; GitHub operations need the web UI.
 
 ## In progress
 
-Nothing is part-written. The design phase is complete: [14 ADRs](adr/README.md) and a [glossary](GLOSSARY.md). The build has not started.
+Nothing is part-written.
 
-Next task is the prerequisite below, then the build order in [ROADMAP](ROADMAP.md).
+Done: the GPU lock (`llm_engine/gpu.py`), route resolution (`llm_engine/routes.py`), and `embeddings.embed()` rehomed off the agent loop. Together these unblock the deletions.
+
+**Next: the deletions commit** — `tgi.py`, `tasks/`, `frontend/redis_relay.py`, the three loop-artifact tools, and `pipeline.py`'s agent path. Then the runs table, the dcode extension, the middlewares, the adapters, and the MedGemma batch helper.
+
+The build order in [ROADMAP](ROADMAP.md) listed the embeddings rehome before the lock. That was wrong and is now corrected: the rehome needs both route resolution and serialization from the code being deleted.
 
 ## Known traps
 
-- **`embeddings.embed()` blocks the deletions.** It reaches `GenerativeService.get_client` through `tasks/chat_tasks.embed_text`, so deleting `tgi.py` breaks embeddings, which the knowledge store needs. Rehome it to a standalone OpenAI-compatible client first. This is why `openai` survives in `pyproject.toml`; ADR-0002 does not mention it.
+- **The GPU lock is re-entrant, and must stay that way.** `flock` associates a lock with the open file description, so a nested acquisition opens a second fd and self-deadlocks with no other process involved. A per-thread depth counter handles it. Removing that counter reintroduces a hang that looks like contention but has no other party.
+- **`grep` for other callers before deleting `tgi.py`.** `embeddings.embed()` was the non-obvious one and is now clear, but `memory/summarize.py`, `memory/document_index.py`, `tooling/websearch.py` and `pipeline.py` all still import `GenerativeService` or the Celery tasks.
 - **`pyproject.toml` describes the post-deletion state.** A fresh `uv sync` today removes celery and redis and breaks `llm_engine/tasks/`. Fine on the existing env.
 - **`pdftext_workers=1` exists because of Celery's prefork pool.** Removing it with Celery is correct in theory. Verify ingestion afterwards; that workaround came from a real failure.
 - **`alira-models.ini` understates VRAM by ~900 MiB.** Its figures were taken in single-model mode and omit the router parent process. Bonsai 2 27B measures 14,424 MiB of 16,303. The "131072 also fits" note is optimistic by the same margin and is unverified under router mode.
