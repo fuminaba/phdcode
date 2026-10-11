@@ -6,11 +6,9 @@ from dotenv import load_dotenv
 from pydantic import create_model
 
 try:
-    from .gpu import gpu_lock
     from .prompts import json_schema_instruction
     from .routes import client, resolve
 except ImportError:
-    from gpu import gpu_lock
     from prompts import json_schema_instruction
     from routes import client, resolve
 
@@ -18,7 +16,9 @@ load_dotenv()
 
 log = logging.getLogger(__name__)
 
-GENERATION_MODEL = os.getenv("GENERATION_MODEL", "qwen3:14b")
+# The route for summaries (ADR-0015, ADR-0017). The default is the model
+# that drives the harness, so that a local setup loads one model only.
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL") or os.getenv("AGENT_BACKEND")
 
 
 def generate(
@@ -34,19 +34,24 @@ def generate(
     validate raises pydantic.ValidationError.
 
     Replaces tgi.GenerativeService.generate_text, which reached the model
-    through the Celery queue (ADR-0015). Like embed(), it holds the GPU lock
-    for local routes only.
+    through the Celery queue (ADR-0015). It takes no GPU lock: the model
+    server is the GPU tenant and holds the lock for its full life (ADR-0017).
+    If the server is stopped, the call raises openai.APIConnectionError.
     """
-    route = resolve(model_name or GENERATION_MODEL)
+    model_name = model_name or SUMMARY_MODEL
+    if not model_name:
+        raise RuntimeError("Set SUMMARY_MODEL or AGENT_BACKEND in .env.")
+    route = resolve(model_name)
     messages = [{"role": "user", "content": prompt}]
     if schema is not None:
         messages.insert(0, {"role": "system", "content": json_schema_instruction(schema)})
 
-    with gpu_lock(enabled=route.local, label=f"generate:{route.name}"):
-        response = client(route).chat.completions.create(model=route.name, messages=messages)
-    content = response.choices[0].message.content
+    response = client(route).chat.completions.create(model=route.name, messages=messages)
+    # A reasoning model can put a <think> block before the answer.
+    content = (response.choices[0].message.content or "").split("</think>")[-1].strip()
 
     if schema is None:
         return content
-    content = content.strip().removeprefix("```json").removesuffix("```")
-    return create_model("Reply", **schema).model_validate_json(content).model_dump()
+    # The JSON object, without a code fence or text around it.
+    json_text = content[content.find("{"):content.rfind("}") + 1]
+    return create_model("Reply", **schema).model_validate_json(json_text).model_dump()

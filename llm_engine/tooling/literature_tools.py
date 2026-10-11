@@ -9,9 +9,9 @@ except ImportError:
     from registry import tool
 
 try:
-    from ..context import current_user_id, run_on_main_loop
+    from ..context import run_on_main_loop
 except ImportError:
-    from context import current_user_id, run_on_main_loop
+    from context import run_on_main_loop
 
 try:
     from ._tooling_deps.arxiv_search import canonical_to_arxiv_field, search_arxiv as _search_arxiv
@@ -167,11 +167,9 @@ def save_finding(
         categories: Optional[list[str]] = None,
 ) -> str:
     """
-    Saves a paper as a bookmark for the current user -- title, authors, and
-    abstract (embedded for search), findable later via search_documents
-    right alongside their own uploaded documents. Does NOT download or
-    fully ingest the PDF -- no chunking, no full text, so read_document/
-    search_document_chunks won't work on a saved finding afterward. Use
+    Saves a paper as abstract-only -- title, authors, and abstract
+    (embedded as the concept facet), findable later with search_papers.
+    Does NOT download or parse the PDF, so the paper has no chunks. Use
     this for papers worth remembering, not every search hit.
 
     Pass the field values from a read_paper call on this paper (db_id,
@@ -179,26 +177,23 @@ def save_finding(
     search_arxiv/search_pubmed's own results don't include abstract_text,
     so look the paper up with read_paper first if you haven't already.
     Saving the same paper (same db_id + src_db) again updates the existing
-    bookmark instead of creating a duplicate.
+    paper instead of creating a duplicate.
     """
-    user_id = current_user_id.get()
-    if not user_id:
-        return "No active user context."
     if not abstract_text:
         return "Can't save a finding with no abstract_text -- call read_paper first to get it."
 
     try:
         from ..embeddings import embed
-        from ..memory.db import save_literature_finding
+        from ..memory.db import save_paper
     except ImportError:
         from embeddings import embed
-        from memory.db import save_literature_finding
+        from memory.db import save_paper
 
-    embedding = embed(abstract_text)
-    document_id = run_on_main_loop(
-        save_literature_finding(
-            user_id, None, src_db, db_id, title, authors, abstract_text,
-            embedding, hyperlink, doi, categories or [],
+    [embedding] = embed([abstract_text])
+    paper_id = run_on_main_loop(
+        save_paper(
+            src_db.lower().strip(), db_id, title, authors, abstract_text, embedding,
+            doi=doi, url=hyperlink, keywords=categories or [],
         )
     )
-    return f"Saved as document_id={document_id}. Findable later via search_documents."
+    return f"Saved as paper_id={paper_id}. Findable later via search_papers."

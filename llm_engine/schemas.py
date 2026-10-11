@@ -1,5 +1,6 @@
-DOCUMENT_METADATA_SCHEMA = {
+PAPER_METADATA_SCHEMA = {
     "title" : (str, ...),
     "authors" : (list[str], ...),
     "keywords" : (list[str], ...),
+    "abstract" : (str, ...),
 }
