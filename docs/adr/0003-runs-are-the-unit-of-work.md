@@ -1,6 +1,6 @@
 # ADR-0003: Runs are the unit of work
 
-**Status:** Accepted — 2026-09-22
+**Status:** Superseded by [ADR-0015](0015-rescope-to-literature-rag-tool.md) — 2026-10-10
 
 ## Context
 
