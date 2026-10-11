@@ -1,6 +1,6 @@
 # ADR-0008: Retire Celery and Redis
 
-**Status:** Accepted — 2026-09-22
+**Status:** Superseded by [ADR-0017](0017-gpu-main-slot.md) — 2026-10-10
 
 ## Context
 

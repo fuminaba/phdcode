@@ -1,6 +1,6 @@
 # ADR-0010: Observability via extension middleware
 
-**Status:** Accepted — 2026-09-22
+**Status:** Superseded by [ADR-0015](0015-rescope-to-literature-rag-tool.md) — 2026-10-10
 
 ## Context
 

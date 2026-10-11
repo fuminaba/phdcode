@@ -1,6 +1,6 @@
 # ADR-0005: Integrate via dcode extensions, not MCP
 
-**Status:** Accepted — 2026-09-22
+**Status:** Superseded by [ADR-0016](0016-mcp-server-is-the-only-integration.md) — 2026-10-10
 
 ## Context
 

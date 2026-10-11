@@ -7,90 +7,92 @@ things.
 
 ---
 
-**Agent** — the thing that runs a reasoning loop and calls tools. There is
-exactly one: dcode, driven by Bonsai 2 27B (ADR-0001). *Not* MedGemma, which
-cannot call tools at all — its chat template has no tool-call construct.
+## Literature
 
-**Harness** — the program that owns the agent loop, its filesystem and shell
-tools, its subagents, and its approval gates. dcode is the harness. We do not
-have one of our own and no longer maintain one (ADR-0002).
+**Paper** — one publication from arXiv, PubMed or OpenAlex that the tool
+holds. *Avoid:* document, bookmark.
 
-**Run** — one invocation of the agent, recorded in the `runs` table: trigger,
-prompt, thread, exit status, output (ADR-0003). The unit of work. A user message
-and a timer firing are two *triggers* for the same thing, not two pipelines.
+**Abstract-only paper** — a paper whose only text is its metadata and abstract.
+An answer that cites it says so.
 
-**Trigger** — what caused a run. Either a message from an adapter, or a due hook.
+**Full-text paper** — a paper whose PDF the tool has parsed into chunks.
 
-**Hook (ALiRA2)** — a row in the `hooks` table describing scheduled work, fired
-by the ticker (ADR-0004). *Not* to be confused with a dcode hook.
+**Chunk** — one retrievable piece of the full text of a paper, with its page,
+its embedding and its keyword index. The source of a quoted passage.
 
-**Hook (dcode)** — a shell handler dcode invokes on `SessionStart`,
-`PreToolUse`, `PostToolUse` or `Stop`. We use **middleware** instead (ADR-0010);
-the term appears only when discussing dcode's own mechanisms.
+**Parse mode** — how the PDF of a full-text paper was turned into text:
+*text* (the text layer only, on the CPU) or *balanced* (a vision model reads
+the pages where the text layer is bad).
 
-**Thread** — dcode's record of one ongoing conversation, stored under
-`DEEPAGENTS_HOME`. Resumed across runs with `--resume`. The authoritative record
-of what was *said* (ADR-0009).
+**Upgrade** — a second parse of a full-text paper from *text* to *balanced*
+mode. It replaces the chunks, but not the summaries.
 
-**Capability** — anything the system can do for the user. Every capability is
-exposed as a tool, a library, or (usually) both.
+**Facet** — one aspect of a paper that search can target: *concept* (the
+abstract), *methods* or *results* (summaries of the full text). Each facet has
+its own embedding. An abstract-only paper has only the concept facet.
 
-**Tool** — a capability the agent discovers and invokes by name. Returns
-quickly. Registered into dcode via `register_tool` (ADR-0005). A tool never
-takes the GPU lock itself.
+**Citation** — the paper, the page and an exact quote. *Not* a chunk ID, which
+changes at an upgrade.
 
-**Library** — a capability the agent imports or shells out to, because it loops,
-runs long, or needs exclusive GPU. Takes the GPU lock internally. Ships with a
-CLI, because `execute` is how the agent reaches for it first (ADR-0006).
+## Surveillance
+
+**Saved search** — a standing query to arXiv, PubMed or OpenAlex, with an
+interest statement. *Avoid:* hook, alert.
+
+**Interest statement** — the natural-language description of what makes a hit
+relevant to a saved search. Triage judges each hit against it.
+
+**Sweep** — one pass over all saved searches that collects new hits, triages
+them, and writes a digest.
+
+**Triage** — the decision, with a probability, whether one hit is relevant to an
+interest statement. Made by a decision model, not by generated text.
+
+**Digest** — the dated note that one sweep writes: the relevant hits, each with
+its triage probability.
+
+**Drain** — the timer pass that makes Surya the tenant, upgrades every
+paper in *text* parse mode, and makes the pending summaries. CLI only, never a
+tool.
+
+**Cleared GPU** — the state between `phdcode gpu clear` and `phdcode gpu
+restore`: no phdcode tenant starts, so that training has the whole card.
+
+## System
+
+**Harness** — the program that owns the agent loop: Claude Code, dcode, or any
+other MCP client. phdcode has none of its own (ADR-0016).
+
+**Agent** — the model that runs in the harness and calls phdcode's tools. Any
+model with tool calling. *Not* a part of phdcode.
+
+**Capability** — anything the tool can do for the user. Exposed as a tool, a
+library, or both.
+
+**Tool** — a capability the agent discovers and invokes by name, through the
+MCP server. Returns quickly. Never starts or waits for a GPU workload.
+
+**Library** — a capability the agent imports or calls as a CLI, because it
+loops, runs long, or needs the GPU (ADR-0006).
 
 **The split rule** — *A capability is a tool if the agent should discover and
 invoke it by name; a library if the agent may need to compose or customize it.
-Most are both. Anything touching the GPU takes the lock inside the library,
-never in the wrapper.* The practical test: **can this block someone else's
-turn?**
+Most are both.* The practical test: **can this block someone else's turn?**
 
-**Extension** — Python loaded into dcode's process that registers tools and
-middleware (ADR-0005). How ALiRA2's capabilities reach the agent.
+**GPU lock** — the exclusive `flock` that a phdcode tenant holds for its full
+life (ADR-0017). *Not* a lock for each request.
 
-**Middleware** — an extension-registered interceptor around the agent loop. Used
-for the tool-call mirror, the web-search cache, and the thread summary
-(ADR-0010).
+**Tenant** — the one workload that holds the GPU: the local LLM, Surya, or
+training. Embeddings are never a tenant; they run on the CPU.
 
-**GPU lock** — an OS-level advisory `flock` that every GPU consumer acquires:
-llama-server requests, MedGemma batch runs, marker-pdf extraction (ADR-0007).
-Advisory, not enforced — correctness depends on GPU work living in libraries
-that take it. The only arbiter that covers scripts the agent writes itself.
+**Agent backend** — the setting that names the model that drives the harness. If
+it is local, the local LLM is the usual tenant. *Not* chosen by
+phdcode: the user sets the harness and this setting to match.
 
-**Conversation** — what was said. Lives in dcode threads. *Not* stored turn-by-
-turn in Postgres any more (ADR-0009).
+**Route** — a named model endpoint, with its locality. A local route is a GPU
+tenant; a hosted route is not. *Not* a lock for each call.
 
-**Knowledge** — what was learned: documents, papers, findings, summaries, and
-their embeddings, in Postgres with pgvector. Ours, and searchable. The other
-half of the memory split.
-
-**Finding** — a durable observation worth keeping: a saved paper, a note about
-an image, a conclusion. Knowledge, not conversation.
-
-**Adapter** — a thin translation layer between a channel and the run interface.
-Telegram is one; the web app will be another (ADR-0012). An adapter holds no
-agent logic and never touches the model.
-
-**Route** — a named model endpoint with its own concurrency, locality and retry
-policy. Local routes contend for the GPU lock; hosted routes do not.
-
-**Backend** — a model server. Ollama (quantized chat models), llama-server
-(Bonsai 2, router mode), transformers in-process (MedGemma), and hosted APIs.
-
-**Document / chunk** — an ingested source and its retrievable pieces, with
-separate embeddings and hybrid vector plus full-text search fused by reciprocal
-rank. Knowledge.
-
-**Patch** — one tile of a whole-slide image. The unit MedGemma processes in
-batch; the reason the batch path is a library rather than a tool.
-
-**Turn action** — one row in `turn_actions` recording a single agent action,
-written live and rendered by `live_viewer.py`. Under the new design these are
-produced by middleware observing dcode (ADR-0010).
+**Backend** — a model server: llama-server, vLLM, Ollama, or a hosted API.
 
 ---
 
@@ -98,18 +100,39 @@ produced by middleware observing dcode (ADR-0010).
 
 Kept so older documents and commits stay readable.
 
-**Tool loop** — `tgi.py`'s `_run_tool_loop`. Deleted (ADR-0002); dcode's loop
-replaces it.
+**Document** — the old name for a paper. The old tables `documents` and
+`document_chunks` are now `papers` and `chunks`.
+
+**Bookmark** — `document_kind = 'bookmark'`. Now an abstract-only paper.
+
+**Run / trigger** — one invocation of dcode, recorded in a `runs` table, and its
+cause (ADR-0003). Superseded by ADR-0015: the harness keeps its own transcript.
+
+**Hook (ALiRA2)** — a row in the `hooks` table for scheduled work (ADR-0004).
+Now a saved search and a systemd timer.
+
+**Hook (dcode)**, **Extension**, **Middleware** — dcode's in-process integration
+points (ADR-0005, ADR-0010). Replaced by the MCP server (ADR-0016).
+
+**Thread**, **Conversation**, **Knowledge**, **Finding** — the two halves of the
+memory split (ADR-0009). Conversation memory is out of scope.
+
+**Adapter** — a channel layer such as Telegram or a web app (ADR-0012). The
+shell is the only interface now.
+
+**Patch** — one tile of a whole-slide image for MedGemma. Out of scope.
+
+**Turn action** — one row in `turn_actions` for `live_viewer.py`. Deleted.
+
+**Tool loop** — `tgi.py`'s `_run_tool_loop`. Deleted (ADR-0002).
 
 **Digest round** — the pass that collapsed raw tool output into a short note
-before the next model call. Deleted with the loop. Returns as middleware if the
-need reappears.
+before the next model call. Deleted with the loop. *Not* a digest.
 
 **Step budget / `continue_research`** — the self-extending cap on model↔tool
-round trips. No dcode equivalent; `--recursion-limit` is a ceiling, not a grant.
+round trips. Deleted with the loop.
 
-**`discover_tools`** — progressive tool revelation, to keep tool schemas out of
-every call. Dcode's concern now.
+**`discover_tools`** — progressive tool revelation. Deleted with the loop.
 
 **Chat queue** — the Celery `concurrency=1` queue that serialized GPU calls.
-Replaced by the GPU lock (ADR-0007, ADR-0008).
+Replaced by the GPU lock (ADR-0007, then ADR-0017).
