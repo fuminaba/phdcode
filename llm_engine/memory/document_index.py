@@ -7,40 +7,29 @@ from typing import NamedTuple, Optional
 from dotenv import load_dotenv
 
 try:
-    from ..documents import UPLOADS_DIR, ingest_document
+    from ..documents import PAPERS_DIR, ingest_document
     from ..embeddings import embed
     from ..generation import generate
     from ..prompts import (
         chunk_digest_prompt,
         document_metadata_prompt,
-        document_summary_prompt,
         methods_summary_prompt,
         results_summary_prompt,
     )
-    from ..schemas import DOCUMENT_METADATA_SCHEMA
+    from ..schemas import PAPER_METADATA_SCHEMA
 except ImportError:
-    from documents import UPLOADS_DIR, ingest_document
+    from documents import PAPERS_DIR, ingest_document
     from embeddings import embed
     from generation import generate
     from prompts import (
         chunk_digest_prompt,
         document_metadata_prompt,
-        document_summary_prompt,
         methods_summary_prompt,
         results_summary_prompt,
     )
-    from schemas import DOCUMENT_METADATA_SCHEMA
+    from schemas import PAPER_METADATA_SCHEMA
 
-from .db import (
-    add_document_keywords,
-    create_document,
-    save_document_chunks,
-    set_document_paths,
-    update_document_metadata,
-    update_document_methods_summary,
-    update_document_results_summary,
-    update_document_summary,
-)
+from .db import add_paper_keywords, set_facet, set_full_text, update_paper_metadata
 
 load_dotenv()
 
@@ -63,50 +52,54 @@ CHUNK_OVERLAP = int(os.getenv("DOCUMENT_CHUNK_OVERLAP", "200"))
 # each chunk into a short digest at the cheap default context (fast, no
 # truncation risk since each chunk is small), then reduce over the
 # concatenated digests -- which stays well within the default context even
-# for long documents -- using the existing document/methods/results summary
-# prompts unchanged.
+# for long documents -- using the existing methods/results summary prompts
+# unchanged.
 MAP_CHUNK_SIZE = int(os.getenv("DOCUMENT_MAP_CHUNK_SIZE", "8000"))
 MAP_CHUNK_OVERLAP = 300
 
+# marker 1.10.2 runs its OCR models in this process, which is the quality of
+# the balanced mode. The text mode (no OCR, CPU) comes with marker 2.
+PARSE_MODE = "balanced"
+
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# marker's paginate_output line before each page: "{0}" + 48 dashes.
+_PAGE_SEPARATOR_RE = re.compile(r"^\{(\d+)\}-{3,}$")
 
 
-class ChunkResult(NamedTuple):
+class Chunk(NamedTuple):
     content: str
-    start_line: int  # 1-indexed, inclusive
-    end_line: int     # 1-indexed, inclusive
+    page_start: int  # 1-indexed
+    page_end: int    # 1-indexed, inclusive
 
 
-def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[ChunkResult]:
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[Chunk]:
     """Splits text into overlapping chunks that only ever break at sentence
-    or line boundaries — never mid-sentence — and reports each chunk's
-    source start_line/end_line (1-indexed, inclusive) in the original text.
+    or line boundaries — never mid-sentence — and reports the pages of each
+    chunk. A page separator line from marker sets the page of the lines
+    after it; text before the first separator is page 1.
 
     Text is first split into lines, then each line into sentences, giving a
-    flat ordered list of (line_number, sentence) units. Units are greedily
+    flat ordered list of (page, sentence) units. Units are greedily
     accumulated into a chunk until adding the next one would exceed
     chunk_size; overlap re-includes enough trailing units from the previous
     chunk (by approximate character length, not raw slicing) that the next
     chunk starts with recent context instead of cold. Returns [] for empty/
     whitespace-only text.
     """
-    if not text.strip():
-        return []
-
     units: list[tuple[int, str]] = []
-    for line_number, line in enumerate(text.splitlines(), start=1):
+    page = 1
+    for line in text.splitlines():
         stripped = line.strip()
-        if not stripped:
+        separator = _PAGE_SEPARATOR_RE.match(stripped)
+        if separator:
+            page = int(separator.group(1)) + 1
             continue
         for sentence in _SENTENCE_SPLIT_RE.split(stripped):
             sentence = sentence.strip()
             if sentence:
-                units.append((line_number, sentence))
+                units.append((page, sentence))
 
-    if not units:
-        return []
-
-    chunks: list[ChunkResult] = []
+    chunks: list[Chunk] = []
     n = len(units)
     i = 0
     while i < n:
@@ -118,12 +111,10 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                 break
             length += addition
             j += 1
-        if j == i:
-            j = i + 1  # a single unit longer than chunk_size: take it alone
 
         current_units = units[i:j]
         content = " ".join(sentence for _, sentence in current_units)
-        chunks.append(ChunkResult(content, current_units[0][0], current_units[-1][0]))
+        chunks.append(Chunk(content, current_units[0][0], current_units[-1][0]))
 
         if j >= n:
             break
@@ -145,99 +136,98 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     return chunks
 
 
-async def ingest_and_index_document(
-        user_id: str,
-        conversation_id: Optional[int],
+async def ingest_full_text(
+        paper_id: int,
         filename: str,
         content: bytes,
+        extract_metadata: bool = False,
         model_name: Optional[str] = None,
-) -> int:
-    """The full RAG-oriented document pipeline: register the DB row, extract
-    (marker-pdf, off-thread) into a per-upload folder that embeds this row's
-    own id, chunk + embed the extracted text for RAG retrieval, then
-    generate a general summary (which also covers conceptual/theoretical
-    framing), title/authors/keywords, and two more summary "flavors"
-    (methodological, results), each with its own embedding. Everything is
-    persisted onto the documents/document_chunks/keywords tables. Returns
-    the document id. Each stage boundary is logged.
+) -> list[str]:
+    """Makes a full-text paper of a stored paper: parses the PDF into
+    PAPERS_DIR/<paper_id>/, replaces its chunks (with pages and CPU
+    embeddings), then makes the methods and results facets.
 
-    model_name selects the route for the summary and metadata calls (see
-    generation.generate); None uses GENERATION_MODEL.
+    extract_metadata=True is for a local PDF, which has no source record:
+    the model also extracts the title, the authors, the keywords and the
+    abstract, and the abstract becomes the concept facet.
 
-    Summary/methods/results generation is map-reduce, not one call over the
-    raw text: Ollama's default context window (4096 tokens on this
-    deployment) silently truncates a whole-document prompt, and raising
-    num_ctx per-call was tried and rejected -- it triggers a catastrophic
-    decode-speed cliff at real document lengths on this hardware. Instead,
-    the text is split into larger map-reduce-sized chunks (MAP_CHUNK_SIZE,
-    distinct from the smaller RAG-retrieval CHUNK_SIZE), each digested
-    individually at the cheap default context, and the summary/methods/results
-    prompts run unchanged against the concatenation of those digests -- short
-    enough to stay within the default context even for a long document.
-    Metadata is the exception: scoped to just the first map-chunk (title/
-    authors/keywords are effectively always on an academic paper's first
-    page), since a narrative digest could mangle exact title/author text
-    that needs to survive verbatim.
-
-    Deliberately sequential, not concurrent: whether the LLM backend
-    actually executes concurrent requests in parallel or just queues them
-    depends on server-side config this project doesn't control or know, so
-    there's no proven latency win to justify the added complexity.
+    The chunks are stored before any model call, so the paper is searchable
+    even if a model step fails. A model step can fail for any reason: the
+    server is stopped, no model is set, the reply is not valid. Then the
+    paper stays full-text and its summaries are pending (ADR-0017). Returns
+    one line for each failed step, for the caller to show; [] = all done.
     """
-    document_id = await create_document(user_id, conversation_id, filename)
-    conversation_dir = str(conversation_id) if conversation_id is not None else "standalone"
-    dir_path = UPLOADS_DIR / user_id / conversation_dir / str(document_id)
-
-    log.info("document %s: extracting %s", document_id, filename)
+    dir_path = PAPERS_DIR / str(paper_id)
+    log.info("paper %s: parsing %s", paper_id, filename)
     extracted = await asyncio.to_thread(ingest_document, dir_path, filename, content)
-    await set_document_paths(document_id, str(dir_path), str(extracted.text_path))
-
     text = extracted.text_path.read_text()
 
     chunks = chunk_text(text)
-    if chunks:
-        chunk_embeddings = [await asyncio.to_thread(embed, chunk.content) for chunk in chunks]
-        await save_document_chunks(document_id, chunks, chunk_embeddings)
-    log.info("document %s: indexed %d chunks", document_id, len(chunks))
+    embeddings = await asyncio.to_thread(embed, [c.content for c in chunks]) if chunks else []
+    await set_full_text(paper_id, PARSE_MODE, str(extracted.raw_path), str(extracted.text_path), chunks, embeddings)
+    log.info("paper %s: indexed %d chunks", paper_id, len(chunks))
 
-    # Map: digest each (larger, map-reduce-sized) chunk individually at the
-    # cheap default context -- fast, and never at risk of truncation since
-    # each chunk is small. Metadata is scoped to just the first chunk: title/
-    # authors/keywords are effectively always on an academic paper's first
-    # page, so there's no need to map-reduce metadata across the whole
-    # document (and doing so would risk a narrative digest mangling exact
-    # title/author text, which needs to survive verbatim).
+    steps = [("metadata", extract_paper_metadata)] if extract_metadata else []
+    steps.append(("summaries", summarize_full_text))
+    failures = []
+    for name, step in steps:
+        try:
+            await step(paper_id, text, model_name)
+        except Exception as e:  # any failure leaves the step pending; the chunks stay
+            log.exception("paper %s: %s pending", paper_id, name)
+            failures.append(f"{name} pending: {type(e).__name__}: {e}")
+    return failures
+
+
+async def extract_paper_metadata(paper_id: int, text: str, model_name: Optional[str] = None) -> None:
+    """Writes the title, the authors, the keywords and the concept facet (the
+    abstract) of a local PDF. Uses the first map chunk only: these are on the
+    first page, and a digest could change the exact text."""
+    first = chunk_text(text, chunk_size=MAP_CHUNK_SIZE, overlap=MAP_CHUNK_OVERLAP)[:1]
+    if not first:
+        return
+    metadata = await asyncio.to_thread(
+        generate, document_metadata_prompt(first[0].content), model_name, PAPER_METADATA_SCHEMA,
+    )
+    await update_paper_metadata(paper_id, metadata["title"], metadata["authors"])
+    await add_paper_keywords(paper_id, metadata["keywords"])
+    if metadata["abstract"].strip():
+        [abstract_embedding] = await asyncio.to_thread(embed, [metadata["abstract"]])
+        await set_facet(paper_id, "concept", metadata["abstract"], abstract_embedding)
+
+
+async def summarize_full_text(paper_id: int, text: str, model_name: Optional[str] = None) -> None:
+    """Writes the methods and results facets of a full-text paper. The drain
+    calls this for the pending summaries. Map-reduce, not one call over the
+    raw text (see MAP_CHUNK_SIZE)."""
     map_chunks = chunk_text(text, chunk_size=MAP_CHUNK_SIZE, overlap=MAP_CHUNK_OVERLAP)
-    digests = []
-    for chunk in map_chunks:
-        digests.append(await asyncio.to_thread(generate, chunk_digest_prompt(chunk.content), model_name))
+    if not map_chunks:
+        return
+
+    digests = [
+        await asyncio.to_thread(generate, chunk_digest_prompt(chunk.content), model_name)
+        for chunk in map_chunks
+    ]
     digest_text = "\n\n".join(
         f"--- Excerpt {i + 1} digest ---\n{digest}" for i, digest in enumerate(digests)
     )
-    metadata_source = map_chunks[0].content if map_chunks else text
-    log.info("document %s: digested %d sections", document_id, len(map_chunks))
+    log.info("paper %s: digested %d sections", paper_id, len(map_chunks))
 
-    # Reduce: the existing summary/methods/results prompts, unchanged, now
-    # fed the (much shorter) concatenated digests instead of the raw text --
-    # comfortably within the default context even for a long document.
-    summary = await asyncio.to_thread(generate, document_summary_prompt(digest_text), model_name)
-    await update_document_summary(document_id, summary, await asyncio.to_thread(embed, summary))
+    methods = await asyncio.to_thread(generate, methods_summary_prompt(digest_text), model_name)
+    results = await asyncio.to_thread(generate, results_summary_prompt(digest_text), model_name)
+    methods_embedding, results_embedding = await asyncio.to_thread(embed, [methods, results])
+    # results first: a paper with no methods summary counts as pending.
+    await set_facet(paper_id, "results", results, results_embedding)
+    await set_facet(paper_id, "methods", methods, methods_embedding)
+    log.info("paper %s: summaries done", paper_id)
 
-    metadata = await asyncio.to_thread(
-        generate, document_metadata_prompt(metadata_source), model_name, DOCUMENT_METADATA_SCHEMA,
-    )
-    await update_document_metadata(document_id, metadata.get("title"), metadata.get("authors") or [])
-    await add_document_keywords(document_id, metadata.get("keywords") or [])
 
-    methods_summary = await asyncio.to_thread(generate, methods_summary_prompt(digest_text), model_name)
-    await update_document_methods_summary(
-        document_id, methods_summary, await asyncio.to_thread(embed, methods_summary),
-    )
-
-    results_summary = await asyncio.to_thread(generate, results_summary_prompt(digest_text), model_name)
-    await update_document_results_summary(
-        document_id, results_summary, await asyncio.to_thread(embed, results_summary),
-    )
-    log.info("document %s: summaries and metadata done", document_id)
-
-    return document_id
+if __name__ == "__main__":
+    # python -m llm_engine.memory.document_index
+    separator = "-" * 48
+    text = f"Title line.\n\n{{0}}{separator}\n\nOne. Two.\n\n{{1}}{separator}\n\nThree.\n"
+    assert chunk_text(text, chunk_size=1000) == [Chunk("Title line. One. Two. Three.", 1, 2)]
+    pages = [(c.page_start, c.page_end) for c in chunk_text(text, chunk_size=5, overlap=0)]
+    assert pages == [(1, 1), (1, 1), (1, 1), (2, 2)], pages
+    assert chunk_text("  \n\n") == []
+    print("chunk_text: ok")

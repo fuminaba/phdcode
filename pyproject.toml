@@ -22,8 +22,8 @@ dependencies = [
 
     # --- Model access ------------------------------------------------------
     # OpenAI-compatible client, used against Ollama and llama-server rather
-    # than against OpenAI itself. embeddings.embed() and generation.generate()
-    # resolve their client through it.
+    # than against OpenAI itself. generation.generate() resolves its client
+    # through routes.py; embeddings.embed() calls Ollama's native API.
     "openai==1.109.1",
 
     # --- Local inference ---------------------------------------------------

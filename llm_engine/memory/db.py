@@ -1,8 +1,7 @@
-import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import asyncpg
 from dotenv import load_dotenv
@@ -16,22 +15,17 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
+# A facet selects the columns `{facet}_embedding` and `{facet}_tsv` of papers.
+# The text of each facet is in a different column (see schema.sql).
+FACETS = ("concept", "methods", "results")
+_FACET_TEXT = {"concept": "abstract", "methods": "methods_summary", "results": "results_summary"}
+
 _pool: asyncpg.Pool | None = None
 
 
 async def _init_connection(conn: asyncpg.Connection) -> None:
     await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
     await register_vector(conn)
-    # default=str: without it, a value json.dumps can't natively handle
-    # anywhere in a payload (e.g. a raw SQL row containing a Decimal --
-    # confirmed real, not hypothetical: this exact thing once silently
-    # dropped a whole tool_call row from turn_actions, since
-    # write_turn_action's own best-effort try/except just swallows the
-    # encoder's failure) raises instead of writing. Applies to every
-    # jsonb write through this pool, not just turn_actions.
-    await conn.set_type_codec(
-        "jsonb", encoder=lambda obj: json.dumps(obj, default=str), decoder=json.loads, schema="pg_catalog",
-    )
 
 
 async def get_pool() -> asyncpg.Pool:
@@ -53,155 +47,135 @@ async def init_schema() -> None:
         await conn.execute(schema_sql)
 
 
-async def create_document(user_id: str, conversation_id: Optional[int], filename: str) -> int:
-    """Registers a new document row. Returns its id — used to build the
-    per-upload folder (which embeds the id), set afterward via
-    set_document_paths() once that folder exists."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchval(
-            "INSERT INTO documents (user_id, conversation_id, filename) VALUES ($1, $2, $3) RETURNING id",
-            user_id, conversation_id, filename,
-        )
+def _check_facet(facet: str) -> str:
+    # The facet goes into the SQL text as a column name, so only the fixed
+    # names pass.
+    if facet not in FACETS:
+        raise ValueError(f"Unknown facet {facet!r}; expected one of {FACETS}.")
+    return facet
 
 
-async def set_document_paths(document_id: int, dir_path: str, text_path: str) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE documents SET dir_path = $1, text_path = $2 WHERE id = $3",
-            dir_path, text_path, document_id,
-        )
-
-
-async def update_document_summary(document_id: int, summary: str, embedding: list[float]) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE documents SET summary = $1, embedding = $2, updated_at = now() WHERE id = $3",
-            summary, embedding, document_id,
-        )
-
-
-async def update_document_metadata(document_id: int, title: Optional[str], authors: list[str]) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE documents SET title = $1, authors = $2, updated_at = now() WHERE id = $3",
-            title, authors, document_id,
-        )
-
-
-async def add_document_keywords(document_id: int, keywords: list[str]) -> None:
-    """Upserts each keyword into the shared, deduped `keywords` table
-    (case-/whitespace-normalized) and links it to this document via
-    document_keywords. No-op for an empty list."""
-    if not keywords:
-        return
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        for word in keywords:
-            word = word.strip().lower()
-            if not word:
-                continue
-            keyword_id = await conn.fetchval(
-                "INSERT INTO keywords (word) VALUES ($1) "
-                "ON CONFLICT (word) DO UPDATE SET word = EXCLUDED.word "
-                "RETURNING id",
-                word,
-            )
-            await conn.execute(
-                "INSERT INTO document_keywords (document_id, keyword_id) VALUES ($1, $2) "
-                "ON CONFLICT DO NOTHING",
-                document_id, keyword_id,
-            )
-
-
-async def save_literature_finding(
-        user_id: str,
-        conversation_id: Optional[int],
-        src_db: str,
-        db_id: str,
-        title: str,
-        authors: list[str],
-        abstract: str,
-        embedding: list[float],
-        source_url: Optional[str],
-        doi: Optional[str],
-        categories: list[str],
+async def save_paper(
+        source: Optional[str],
+        source_id: Optional[str],
+        title: Optional[str],
+        authors: Sequence[str],
+        abstract: Optional[str],
+        concept_embedding: Optional[list[float]],
+        published_date: Optional[str] = None,
+        venue: Optional[str] = None,
+        doi: Optional[str] = None,
+        url: Optional[str] = None,
+        pdf_url: Optional[str] = None,
+        keywords: Sequence[str] = (),
 ) -> int:
-    """Saves an arXiv/PubMed search hit as a lightweight documents row
-    (document_kind='bookmark') -- title/authors/abstract-as-summary +
-    embedding, so it's findable via search_documents' hybrid search right
-    alongside fully-ingested uploads, but no dir_path/text_path/chunks
-    (read_document/search_document_chunks won't work on one of these; that
-    needs a real upload or a future "upgrade to full ingestion" path).
-
-    external_ref ("{src_db}:{db_id}") is a stable dedup key: saving the
-    same paper again updates the existing bookmark (ON CONFLICT ... DO
-    UPDATE against the partial unique index on (user_id, external_ref))
-    rather than creating a duplicate row. categories (arXiv subject tags /
-    PubMed publication types) are stored as keywords via the existing
-    add_document_keywords, same normalization as an upload's LLM-extracted
-    ones. Returns the document_id (new or the existing bookmark's, if this
-    was an update)."""
-    external_ref = f"{src_db}:{db_id}"
+    """Stores a paper as abstract-only, or updates a paper that is already
+    stored (same source and source_id). A value that is None (or empty
+    authors) keeps the stored value, so a call with fewer fields never
+    erases metadata, for example the pdf_url that the upgrade needs. A full
+    text, if any, stays. A local PDF has source and source_id None and
+    always gets a new row. Returns the paper id."""
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        document_id = await conn.fetchval(
-            "INSERT INTO documents "
-            "    (user_id, conversation_id, filename, document_kind, title, authors, "
-            "     summary, embedding, source_url, external_ref, doi) "
-            "VALUES ($1, $2, $3, 'bookmark', $4, $5, $6, $7, $8, $9, $10) "
-            "ON CONFLICT (user_id, external_ref) WHERE external_ref IS NOT NULL DO UPDATE SET "
-            "    title = EXCLUDED.title, authors = EXCLUDED.authors, summary = EXCLUDED.summary, "
-            "    embedding = EXCLUDED.embedding, source_url = EXCLUDED.source_url, "
-            "    doi = EXCLUDED.doi, updated_at = now() "
+    async with pool.acquire() as conn, conn.transaction():
+        paper_id = await conn.fetchval(
+            "INSERT INTO papers (source, source_id, title, authors, abstract, concept_embedding, "
+            "                    published_date, venue, doi, url, pdf_url) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) "
+            "ON CONFLICT (source, source_id) DO UPDATE SET "
+            "    title = COALESCE(EXCLUDED.title, papers.title), "
+            "    authors = COALESCE(NULLIF(EXCLUDED.authors, '{}'), papers.authors), "
+            "    abstract = COALESCE(EXCLUDED.abstract, papers.abstract), "
+            "    concept_embedding = COALESCE(EXCLUDED.concept_embedding, papers.concept_embedding), "
+            "    published_date = COALESCE(EXCLUDED.published_date, papers.published_date), "
+            "    venue = COALESCE(EXCLUDED.venue, papers.venue), "
+            "    doi = COALESCE(EXCLUDED.doi, papers.doi), "
+            "    url = COALESCE(EXCLUDED.url, papers.url), "
+            "    pdf_url = COALESCE(EXCLUDED.pdf_url, papers.pdf_url), "
+            "    updated_at = now() "
             "RETURNING id",
-            user_id, conversation_id, external_ref, title, authors,
-            abstract, embedding, source_url, external_ref, doi,
+            source, source_id, title, list(authors), abstract, concept_embedding,
+            published_date, venue, doi, url, pdf_url,
         )
-    await add_document_keywords(document_id, categories)
-    return document_id
+        await _link_keywords(conn, paper_id, keywords)
+    return paper_id
 
 
-async def update_document_methods_summary(document_id: int, summary: str, embedding: list[float]) -> None:
+async def update_paper_metadata(paper_id: int, title: Optional[str], authors: Sequence[str]) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE documents SET methods_summary = $1, methods_embedding = $2, updated_at = now() WHERE id = $3",
-            summary, embedding, document_id,
+            "UPDATE papers SET title = $1, authors = $2, updated_at = now() WHERE id = $3",
+            title, list(authors), paper_id,
         )
 
 
-async def update_document_results_summary(document_id: int, summary: str, embedding: list[float]) -> None:
+async def add_paper_keywords(paper_id: int, keywords: Sequence[str]) -> None:
+    """Links keywords (case- and whitespace-normalized, shared by all papers)
+    to this paper. No-op for an empty list."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        await _link_keywords(conn, paper_id, keywords)
+
+
+async def _link_keywords(conn: asyncpg.Connection, paper_id: int, keywords: Sequence[str]) -> None:
+    # Two statements for any number of keywords: a single statement does not
+    # see the keyword rows that its own CTE inserts.
+    words = sorted({w.strip().lower() for w in keywords} - {""})
+    if not words:
+        return
+    await conn.execute(
+        "INSERT INTO keywords (word) SELECT unnest($1::text[]) ON CONFLICT (word) DO NOTHING",
+        words,
+    )
+    await conn.execute(
+        "INSERT INTO paper_keywords (paper_id, keyword_id) "
+        "SELECT $1, id FROM keywords WHERE word = ANY($2::text[]) ON CONFLICT DO NOTHING",
+        paper_id, words,
+    )
+
+
+async def set_facet(paper_id: int, facet: str, text: str, embedding: list[float]) -> None:
+    """Writes the text and the embedding of one facet. For 'concept' the text
+    is the abstract."""
+    facet = _check_facet(facet)
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE documents SET results_summary = $1, results_embedding = $2, updated_at = now() WHERE id = $3",
-            summary, embedding, document_id,
+            f"UPDATE papers SET {_FACET_TEXT[facet]} = $1, {facet}_embedding = $2, updated_at = now() "
+            f"WHERE id = $3",
+            text, embedding, paper_id,
         )
 
 
-async def save_document_chunks(
-        document_id: int,
-        chunks: list[Any],
-        embeddings: list[list[float]],
+async def set_full_text(
+        paper_id: int,
+        parse_mode: str,
+        pdf_path: str,
+        text_path: str,
+        chunks: Sequence[Any],
+        embeddings: Sequence[list[float]],
 ) -> None:
-    """Bulk-inserts a document's chunks in one round trip. chunks and
-    embeddings must be the same length and in chunk order (chunk_index is
-    assigned from their position). Each chunk is a ChunkResult (or anything
-    duck-typing .content/.start_line/.end_line) from document_index.chunk_text."""
-    pool = await get_pool()
+    """Replaces all chunks of a paper and records how its PDF was parsed, in
+    one transaction. The first parse and the upgrade both use this, so a
+    crash leaves the old chunks and the old parse_mode. Each chunk is a
+    document_index.Chunk (or anything with .content/.page_start/.page_end),
+    in text order."""
     rows = [
-        (document_id, i, chunk.content, chunk.start_line, chunk.end_line, embedding)
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+        (paper_id, i, chunk.content, chunk.page_start, chunk.page_end, embedding)
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=True))
     ]
-    async with pool.acquire() as conn:
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("DELETE FROM chunks WHERE paper_id = $1", paper_id)
         await conn.executemany(
-            "INSERT INTO document_chunks (document_id, chunk_index, content, start_line, end_line, embedding) "
+            "INSERT INTO chunks (paper_id, chunk_index, content, page_start, page_end, embedding) "
             "VALUES ($1, $2, $3, $4, $5, $6)",
             rows,
+        )
+        await conn.execute(
+            "UPDATE papers SET parse_mode = $1, pdf_path = $2, text_path = $3, updated_at = now() "
+            "WHERE id = $4",
+            parse_mode, pdf_path, text_path, paper_id,
         )
 
 
@@ -218,142 +192,127 @@ _RRF_K = 60
 _CANDIDATE_POOL = 20
 
 
-def _rrf_cte(table: str, vector_col: str, text_col: str, filter_sql: str) -> str:
+def _rrf_cte(table: str, vector_col: str, text_col: str, where: str = "TRUE") -> str:
     """The shared vector_ranked/text_ranked/fused CTE prefix behind
-    search_conversations, search_documents, and search_tool_result_cache --
-    identical hybrid-RRF logic in all three, differing only in which table/
-    columns/filter they rank over. A caller prepends this to its own final
+    search_papers and search_chunks. A caller prepends this to its own final
     SELECT (projecting whatever columns it needs from `fused` joined back to
-    `table`) and supplies the same six params in this fixed order:
-    $1=query_embedding, $2=filter_sql's own scoping value (user_id,
-    tool_name, ...), $3=query text, $4=max_results (used only in the
-    caller's own trailing LIMIT, not here), $5=candidate_pool, $6=rrf_k.
+    `table`) and supplies these params in this fixed order:
+    $1=query_embedding, $2=query text, $3=max_results (used only in the
+    caller's own trailing LIMIT, not here), $4=candidate_pool, $5=rrf_k.
+    `where` can use $6 and later.
 
-    table/vector_col/text_col/filter_sql are always hardcoded string
-    literals at each call site, never user input -- same safety profile as
-    the plain string-built queries this replaces.
-
-    Deliberately NOT used by search_document_chunks (needs an extra
-    document-ownership JOIN inside the CTEs themselves, not just a WHERE
-    filter) or search_turns (two independent fusions over different column
-    pairs, combined via GREATEST rather than a single fused CTE) -- forcing
-    either through this same shape would need extra optional parameters
-    just to bend it back into their real structure, trading one
-    easy-to-misread SQL string for a harder-to-verify parameterized one."""
+    table/vector_col/text_col/where are always string literals or checked
+    facet names at each call site, never user input."""
     return (
         f"WITH vector_ranked AS ("
         f"    SELECT id, ROW_NUMBER() OVER (ORDER BY {vector_col} <=> $1) AS rank "
         f"    FROM {table} "
-        f"    WHERE {filter_sql} AND {vector_col} IS NOT NULL "
-        f"    ORDER BY {vector_col} <=> $1 LIMIT $5"
+        f"    WHERE {where} AND {vector_col} IS NOT NULL "
+        f"    ORDER BY {vector_col} <=> $1 LIMIT $4"
         f"), text_ranked AS ("
         f"    SELECT id, ROW_NUMBER() OVER ("
-        f"        ORDER BY ts_rank({text_col}, websearch_to_tsquery('english', $3)) DESC"
+        f"        ORDER BY ts_rank({text_col}, websearch_to_tsquery('english', $2)) DESC"
         f"    ) AS rank "
         f"    FROM {table} "
-        f"    WHERE {filter_sql} AND {text_col} @@ websearch_to_tsquery('english', $3) "
-        f"    ORDER BY ts_rank({text_col}, websearch_to_tsquery('english', $3)) DESC LIMIT $5"
+        f"    WHERE {where} AND {text_col} @@ websearch_to_tsquery('english', $2) "
+        f"    ORDER BY ts_rank({text_col}, websearch_to_tsquery('english', $2)) DESC LIMIT $4"
         f"), fused AS ("
         f"    SELECT COALESCE(v.id, t.id) AS id, "
-        f"           (COALESCE(1.0 / ($6 + v.rank), 0) + COALESCE(1.0 / ($6 + t.rank), 0))::float8 AS score "
+        f"           (COALESCE(1.0 / ($5 + v.rank), 0) + COALESCE(1.0 / ($5 + t.rank), 0))::float8 AS score "
         f"    FROM vector_ranked v FULL OUTER JOIN text_ranked t ON v.id = t.id"
         f") "
     )
 
 
-async def search_documents(
-        user_id: str,
+async def search_papers(
         query: str,
         query_embedding: list[float],
+        facet: str = "concept",
         max_results: int = 5,
 ) -> list[dict[str, Any]]:
-    """Hybrid search over this user's summarized documents: reciprocal rank
-    fusion of (a) cosine distance between query_embedding and each
-    document's whole-document embedding, and (b) Postgres full-text search
-    (websearch_to_tsquery) over title + summary + methods_summary +
-    results_summary (documents.search_vector, a GENERATED STORED column --
-    see schema.sql). Falls back gracefully to pure vector ranking when
-    query has no lexical overlap with any document (the text_ranked CTE is
-    just empty, contributing 0 to every row's fused score).
-
-    Documents with no summary/embedding yet are excluded. Returns the full
-    RAG-oriented record per match: title, authors, keywords, and all three
-    summary flavors (general — which covers conceptual/theoretical framing
-    too — methods, results) — not just the general one — so the agent can
-    get a multi-angle overview from search_documents alone, before deciding
-    whether it needs read_document for the full text. Also returns
-    document_kind ('upload' or 'bookmark' -- see save_literature_finding)
-    plus source_url/doi: a 'bookmark' has no text_path/chunks, so
-    read_document/search_document_chunks won't work on one -- only the
-    fields returned here are available for it."""
+    """Hybrid search over one facet of the papers: reciprocal rank fusion of
+    the cosine distance to `{facet}_embedding` and full-text search over
+    `{facet}_tsv`. A paper without that facet (an abstract-only paper, for
+    methods or results) is not a candidate. Returns the text of the searched
+    facet as `text`, with the metadata and the parse_mode of each paper."""
+    facet = _check_facet(facet)
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            _rrf_cte("documents", "embedding", "search_vector", "user_id = $2")
-            + "SELECT d.id, d.filename, d.title, d.authors, d.text_path, d.created_at, "
-            "       d.summary, d.methods_summary, d.results_summary, d.document_kind, "
-            "       d.source_url, d.doi, f.score, "
-            "       COALESCE(("
-            "           SELECT array_agg(k.word) FROM document_keywords dk "
-            "           JOIN keywords k ON k.id = dk.keyword_id "
-            "           WHERE dk.document_id = d.id"
-            "       ), ARRAY[]::TEXT[]) AS keywords "
-            "FROM fused f "
-            "JOIN documents d ON d.id = f.id "
-            "ORDER BY f.score DESC "
-            "LIMIT $4",
-            query_embedding, user_id, query, max_results, _CANDIDATE_POOL, _RRF_K,
+            _rrf_cte("papers", f"{facet}_embedding", f"{facet}_tsv")
+            + f"SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
+            f"       p.doi, p.url, p.parse_mode, p.{_FACET_TEXT[facet]} AS text, f.score, "
+            f"       COALESCE(("
+            f"           SELECT array_agg(k.word) FROM paper_keywords pk "
+            f"           JOIN keywords k ON k.id = pk.keyword_id "
+            f"           WHERE pk.paper_id = p.id"
+            f"       ), ARRAY[]::TEXT[]) AS keywords "
+            f"FROM fused f JOIN papers p ON p.id = f.id "
+            f"ORDER BY f.score DESC LIMIT $3",
+            query_embedding, query, max_results, _CANDIDATE_POOL, _RRF_K,
         )
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]
 
 
-async def search_document_chunks(
-        user_id: str,
-        document_id: int,
+async def search_chunks(
         query: str,
         query_embedding: list[float],
+        paper_ids: Optional[Sequence[int]] = None,
         max_results: int = 5,
 ) -> list[dict[str, Any]]:
-    """Hybrid search over one document's chunks: reciprocal rank fusion of
-    cosine distance (query_embedding vs. each chunk's embedding) and
-    Postgres full-text search (websearch_to_tsquery) over each chunk's
-    content (document_chunks.search_vector, a GENERATED STORED column —
-    see schema.sql) — the drill-deeper counterpart to search_documents, for
-    a specific fact or passage the whole-document summary doesn't cover.
-    Falls back gracefully to pure vector ranking when query has no lexical
-    overlap with any chunk. The JOIN enforces that document_id actually
-    belongs to user_id (same defense-in-depth pattern as read_document's
-    path scoping): a document_id the caller doesn't own returns [], never
-    another user's chunks, even if guessed."""
+    """Hybrid search over the chunks of the given papers (all full-text
+    papers if paper_ids is None). Returns the content and the pages of each
+    chunk, with the paper id and title, which make the citation.
+
+    pgvector applies the paper_ids filter after the HNSW scan. Without an
+    iterative scan, the first ef_search (40) nearest chunks of the whole
+    table can all belong to other papers, and the vector half comes back
+    empty. relaxed_order can return the candidates slightly out of order;
+    ROW_NUMBER in vector_ranked sorts them again by exact distance."""
+    pool = await get_pool()
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
+        rows = await conn.fetch(
+            _rrf_cte("chunks", "embedding", "search_vector", "($6::bigint[] IS NULL OR paper_id = ANY($6))")
+            + "SELECT c.paper_id, p.title, c.chunk_index, c.page_start, c.page_end, c.content, f.score "
+            "FROM fused f JOIN chunks c ON c.id = f.id JOIN papers p ON p.id = c.paper_id "
+            "ORDER BY f.score DESC LIMIT $3",
+            query_embedding, query, max_results, _CANDIDATE_POOL, _RRF_K,
+            None if paper_ids is None else list(paper_ids),
+        )
+    return [dict(row) for row in rows]
+
+
+async def add_saved_search(source: str, query: str, interest: str, threshold: float = 0.5) -> int:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "INSERT INTO saved_searches (source, query, interest, threshold) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            source, query, interest, threshold,
+        )
+
+
+async def list_saved_searches() -> list[dict[str, Any]]:
+    """The saved searches that are not cancelled, oldest first."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "WITH vector_ranked AS ("
-            "    SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1) AS rank "
-            "    FROM document_chunks dc JOIN documents d ON d.id = dc.document_id "
-            "    WHERE dc.document_id = $2 AND d.user_id = $3 "
-            "    ORDER BY dc.embedding <=> $1 LIMIT $6"
-            "), text_ranked AS ("
-            "    SELECT dc.id, ROW_NUMBER() OVER ("
-            "        ORDER BY ts_rank(dc.search_vector, websearch_to_tsquery('english', $4)) DESC"
-            "    ) AS rank "
-            "    FROM document_chunks dc JOIN documents d ON d.id = dc.document_id "
-            "    WHERE dc.document_id = $2 AND d.user_id = $3 "
-            "          AND dc.search_vector @@ websearch_to_tsquery('english', $4) "
-            "    ORDER BY ts_rank(dc.search_vector, websearch_to_tsquery('english', $4)) DESC LIMIT $6"
-            "), fused AS ("
-            "    SELECT COALESCE(v.id, t.id) AS id, "
-            "           (COALESCE(1.0 / ($7 + v.rank), 0) + COALESCE(1.0 / ($7 + t.rank), 0))::float8 AS score "
-            "    FROM vector_ranked v FULL OUTER JOIN text_ranked t ON v.id = t.id"
-            ") "
-            "SELECT dc.chunk_index, dc.content, dc.start_line, dc.end_line, f.score "
-            "FROM fused f "
-            "JOIN document_chunks dc ON dc.id = f.id "
-            "ORDER BY f.score DESC "
-            "LIMIT $5",
-            query_embedding, document_id, user_id, query, max_results, _CANDIDATE_POOL, _RRF_K,
+            "SELECT id, source, query, interest, threshold, created_at, last_swept_at "
+            "FROM saved_searches WHERE cancelled_at IS NULL ORDER BY id"
         )
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]
+
+
+async def cancel_saved_search(saved_search_id: int) -> bool:
+    """Returns False if no active saved search has this id."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        status = await conn.execute(
+            "UPDATE saved_searches SET cancelled_at = now() WHERE id = $1 AND cancelled_at IS NULL",
+            saved_search_id,
+        )
+    return status == "UPDATE 1"
 
 
 async def close_pool() -> None:

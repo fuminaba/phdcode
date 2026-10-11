@@ -18,26 +18,13 @@ def chunk_digest_prompt(chunk_text: str) -> str:
     )
 
 
-def document_summary_prompt(document_text: str) -> str:
-    return (
-        "Summarize the following document using exactly this template, "
-        "filling each section in based on its actual content. Use \"none\" "
-        "for a section if it doesn't apply. Do not add extra sections, "
-        "headers, or commentary outside the template.\n\n"
-        "Topic: <one line>\n"
-        "Key points: <bullet list>\n"
-        "Core concepts / theoretical framing: <bullet list, or \"none\">\n"
-        "Notable data or figures: <bullet list, or \"none\">\n\n"
-        f"Document:\n{document_text}"
-    )
-
-
 def document_metadata_prompt(document_text: str) -> str:
     return (
-        "Extract metadata from the following document. If it isn't a "
-        "research article/paper, do your best with what's actually present "
-        "— use an empty list for authors/keywords if none apply, rather "
-        "than inventing them.\n\n"
+        "Extract metadata from the following document. Copy the abstract "
+        "word for word; do not summarize it. If it isn't a research "
+        "article/paper, do your best with what's actually present "
+        "— use an empty list for authors/keywords and an empty string for "
+        "the abstract if none apply, rather than inventing them.\n\n"
         f"Document:\n{document_text}"
     )
 

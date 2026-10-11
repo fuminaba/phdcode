@@ -1,42 +1,33 @@
-import logging
+import json
 import os
-from typing import Optional
+import urllib.request
 
 from dotenv import load_dotenv
 
 try:
-    from .gpu import gpu_lock
-    from .routes import client, resolve
+    from .routes import resolve
 except ImportError:
-    from gpu import gpu_lock
-    from routes import client, resolve
+    from routes import resolve
 
 load_dotenv()
-
-log = logging.getLogger(__name__)
 
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 
 
-def embed(text: str, model_name: Optional[str] = None) -> list[float]:
-    """Embeds text via the OpenAI-compatible /v1/embeddings endpoint (Ollama
-    serving EMBEDDING_MODEL locally by default). The returned dimension must
-    match EMBEDDING_DIM in .env and the `embedding` column in schema.sql.
+def embed(texts: list[str]) -> list[list[float]]:
+    """Embeds texts in one call to Ollama's native /api/embed, on the CPU.
 
-    Holds the GPU lock for local routes (see gpu.py). An embedding model is
-    small -- nomic-embed-text is ~0.3GB -- but on a card already holding a
-    13.5GB chat model that last 0.3GB is exactly what there is not room for.
-    Confirmed the hard way once: an unserialized embed() sat 352 seconds
-    behind a background summarization. The lock is re-entrant, so calling
-    this from inside a library that already holds it (an ingestion embedding
-    every chunk, say) runs inline instead of waiting on the slot it holds.
-
-    Previously reached the model through tgi.GenerativeService.get_client and
-    a Celery queue. Both are being deleted (ADR-0002, ADR-0008), so this now
-    resolves its own route and takes the lock directly -- which is why the
-    deletion of tgi.py could not happen before this change.
+    `num_gpu: 0` keeps the model off the GPU (ADR-0017): 57 ms for each text
+    on this machine, so search and ingest never wait for the GPU tenant and
+    take no GPU lock. The OpenAI-compatible /v1/embeddings has no field for
+    this option, so the call goes to the native root of the route of
+    EMBEDDING_MODEL (the route without "/v1"). The route stays the one
+    setting for each server. The dimension must match EMBEDDING_DIM in .env.
     """
-    route = resolve(model_name or EMBEDDING_MODEL)
-    with gpu_lock(enabled=route.local, label=f"embed:{route.name}"):
-        response = client(route).embeddings.create(model=route.name, input=text)
-    return response.data[0].embedding
+    root = resolve(EMBEDDING_MODEL).endpoint.removesuffix("/").removesuffix("/v1")
+    body = json.dumps({"model": EMBEDDING_MODEL, "input": texts, "options": {"num_gpu": 0}}).encode()
+    request = urllib.request.Request(
+        f"{root}/api/embed", body, {"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=600) as response:
+        return json.load(response)["embeddings"]

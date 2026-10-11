@@ -1,3 +1,6 @@
+# The project was created as alira2; this name keeps its container and volume.
+name: alira2
+
 services:
   postgres:
     image: pgvector/pgvector:pg16

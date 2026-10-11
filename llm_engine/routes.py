@@ -1,16 +1,14 @@
-"""Model routes: name -> endpoint, and whether it consumes this machine's GPU.
+"""Model routes: name -> endpoint, and whether it uses this machine's GPU.
 
-Extracted from tgi.GenerativeService.get_client so that callers do not depend
-on the agent loop, which is being deleted (ADR-0002). `embeddings.embed()`
-reached the model through that classmethod, which would have taken the
-knowledge store down with tgi.py.
+generation.generate() gets its client here. embeddings.embed() gets only the
+server root here, because it calls Ollama's native API (see embeddings.py).
+So each server is set in one place.
 
-A Route carries `local`, which decides whether a call takes the GPU lock. A
-hosted API consumes no VRAM here, so routing it through the lock would park
-it behind a document ingestion for no reason -- head-of-line blocking wearing
-the costume of resource protection. `local` defaults to True: taking the lock
-unnecessarily costs latency, while missing it costs an out-of-memory failure,
-so the safe default is the conservative one.
+A Route carries `local`: True if the model runs on this machine's GPU. The
+GPU policy (ADR-0017) uses it to tell a local AGENT_BACKEND, which is a GPU
+tenant, from a hosted one. No call takes a lock because of it: the model
+server is the tenant and holds the lock. `local` defaults to True, because a
+GPU tenant that phdcode does not know about is the worse mistake.
 
 Configured by LLM_ROUTING in .env:
 
@@ -45,11 +43,8 @@ class Route:
     name: str
     endpoint: str
     api_key: str
-    # Does calling this consume THIS machine's VRAM? Decides the GPU lock.
+    # Does this model run on THIS machine's GPU?
     local: bool = True
-    # Concurrent calls this endpoint tolerates. Local routes are 1 by
-    # construction: one card, one model resident at a time.
-    max_concurrency: int = 1
 
 
 def _parse_routing(raw: Optional[str]) -> dict[str, Any]:
@@ -98,7 +93,6 @@ def resolve(model_name: str) -> Route:
         endpoint=entry["host_endpoint"],
         api_key=entry.get("api_key", "-"),
         local=bool(entry.get("local", True)),
-        max_concurrency=int(entry.get("max_concurrency", 1)),
     )
 
 
@@ -112,8 +106,3 @@ def client(route: Route):
 
     return OpenAI(base_url=route.endpoint, api_key=route.api_key)
 
-
-def known_models() -> list[str]:
-    """Model names LLM_ROUTING declares. Does not include the default-route
-    fallback, which accepts any name."""
-    return sorted(_ROUTING)

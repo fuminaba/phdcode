@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-UPLOADS_DIR = Path(os.getenv("LOG_DIR", "logs")) / "uploads"
+PAPERS_DIR = Path(os.getenv("LOG_DIR", "logs")) / "papers"
 
 # marker-pdf/surya batch sizes -- unset (None) leaves surya's own CUDA
 # defaults (36/32/256/32) in place. Lowered via .env to shrink extraction's
@@ -66,6 +66,9 @@ def _get_converter():
         # runs one at a time anyway, serialized through the same queue
         # this would otherwise conflict with.
         batch_config["pdftext_workers"] = 1
+        # A "{n}" + 48 dashes line before each page (n from 0), so that each
+        # chunk knows its page (document_index.chunk_text).
+        batch_config["paginate_output"] = True
         config = ConfigParser(batch_config).generate_config_dict()
         _converter = PdfConverter(config=config, artifact_dict=create_model_dict())
     return _converter
@@ -115,7 +118,7 @@ def ingest_document(dir_path: Path, filename: str, content: bytes) -> ExtractedD
             tables/{i}.csv        <- extracted tables, if any
 
     dir_path is created by the caller (see memory/document_index.py) using a
-    document row's own id, so two uploads never collide even with the same
+    paper row's own id, so two uploads never collide even with the same
     filename. Synchronous and CPU/GPU-heavy — call via asyncio.to_thread from
     async callers.
     """
