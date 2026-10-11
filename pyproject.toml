@@ -5,16 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "phdcode"
 version = "0.1.0"
-description = "Agent harness for PhD work: literature surveillance, document ingestion, and pathology image analysis, driven by dcode over local and hosted models."
+description = "A literature RAG tool for arXiv, PubMed and OpenAlex, served to any agent harness over MCP."
 readme = "README.md"
 requires-python = ">=3.12"
 
-# NOTE: this file describes the POST-DELETION target state. celery and redis
-# are gone per docs/adr/0008-retire-celery-and-redis.md, but llm_engine/tasks/
-# and llm_engine/frontend/redis_relay.py still import them until the deletion
-# commit lands. Until then, installing from this file alone under-installs and
-# the current HEAD will not run.
-#
 # Every entry below is imported somewhere in this repository. Transitive
 # dependencies are deliberately NOT restated -- numpy, scipy, scikit-learn,
 # opencv and Pillow all arrive via marker-pdf and transformers, and pinning
@@ -28,23 +22,15 @@ dependencies = [
 
     # --- Model access ------------------------------------------------------
     # OpenAI-compatible client, used against Ollama and llama-server rather
-    # than against OpenAI itself. Still required after the agent loop is
-    # deleted, because embeddings resolve their client through it.
+    # than against OpenAI itself. embeddings.embed() and generation.generate()
+    # resolve their client through it.
     "openai==1.109.1",
 
     # --- Local inference ---------------------------------------------------
-    # torch is shared by marker-pdf (document extraction) and transformers
-    # (MedGemma). torchvision is required too: confirmed by import, it loads
-    # even on the slow image-processor path. torchaudio and opencv are NOT
-    # imported by anything here and have been dropped.
+    # torch and torchvision are pinned for marker-pdf (document extraction),
+    # so that the CUDA build matches the index below.
     "torch==2.13.0",
     "torchvision==0.28.0",
-    "transformers>=4.57",
-    "accelerate>=1.15",
-    # sentencepiece backs the slow tokenizer, which llm_engine/vision.py pins
-    # deliberately (use_fast=False) so a transformers upgrade cannot silently
-    # change MedGemma's outputs between evaluation runs.
-    "sentencepiece>=0.2",
 
     # --- Document ingestion ------------------------------------------------
     # Pinned to 1.10.2, not 2.x: 2.0.0's layout model is a prompted VLM served
@@ -55,18 +41,9 @@ dependencies = [
     "marker-pdf[all]==1.10.2",
     "polars==1.42.1",
 
-    # --- Interfaces --------------------------------------------------------
-    "python-telegram-bot==22.8",
-    "fastapi==0.141.1",
-    "uvicorn==0.52.4",
-
     # --- External connectors -----------------------------------------------
-    "tavily-python==0.8.0",
     "requests",
     "pydantic",
-    "google-api-python-client",
-    "google-auth-oauthlib",
-    "google-auth-httplib2",
 ]
 
 # ==============================================================================
