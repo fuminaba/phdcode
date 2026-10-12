@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}How it works · phdcode{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: "neutral", flowchart: { useMaxWidth: true } });</script>
+{% endblock %}
+{% block main %}
+<h1>How phdcode works</h1>
+<p>phdcode keeps your literature and gives tools to a chat. The chat (the harness and its model) is outside phdcode: Claude Code or dcode. MCP connects the two. Some parts run with no chat: the daily sweep, the summaries and the GPU rules.</p>
+
+<h2>1. The parts</h2>
+<div class="mermaid">
+flowchart LR
+  subgraph you["You"]
+    CC["Claude Code<br/>model: Claude"]
+    DC["dcode<br/>model: Bonsai 2 27B"]
+    UI["This interface<br/>read-only"]
+  end
+  subgraph phd["phdcode on fuminaba-server"]
+    MCP["phdcode-mcp<br/>9 tools over MCP"]
+    SW["phdcode sweep<br/>timer, 06:00"]
+    SUM["phdcode summarize"]
+    PARSE["marker text parse<br/>GPU if faster, else CPU"]
+    EMB["embeddings<br/>Ollama, CPU"]
+    TRI["triage<br/>Qwen3-Reranker-0.6B"]
+  end
+  subgraph store["Storage"]
+    PG[("Postgres + pgvector<br/>papers, chunks,<br/>saved searches, triaged hits")]
+    FILES[["logs/papers/ID/<br/>PDF, Markdown, figures, tables"]]
+    DIG[["logs/digests/<br/>one file each day"]]
+  end
+  SRC[("arXiv · PubMed · OpenAlex")]
+  LLM["llama-server, port 8080<br/>Bonsai 2 27B, on demand"]
+  CC -- "tool calls" --> MCP
+  DC -- "tool calls" --> MCP
+  DC -- "chat" --> LLM
+  MCP -- "search_sources, get_paper" --> SRC
+  MCP -- "ingest_pdf" --> PARSE
+  PARSE --> FILES
+  PARSE --> EMB
+  EMB --> PG
+  MCP -- "search_papers, search_chunks" --> PG
+  SW --> SRC
+  SW --> TRI
+  TRI --> PG
+  SW --> DIG
+  SUM -- "summaries" --> LLM
+  SUM --> PG
+  UI --> PG
+  UI --> FILES
+  UI --> DIG
+</div>
+
+<h2>2. A RAG question</h2>
+<div class="mermaid">
+sequenceDiagram
+  participant You
+  participant H as Harness (dcode or Claude Code)
+  participant P as phdcode-mcp
+  participant DB as Postgres
+  You->>H: a question
+  H->>P: search_papers(query, facet)
+  P->>DB: hybrid search: meaning (vectors) + keywords, fused by rank
+  DB-->>P: the best papers
+  P-->>H: titles, abstracts or summaries, scores
+  H->>P: search_chunks(query, paper_ids)
+  P->>DB: the same hybrid search over the passages
+  P-->>H: passages, each with its pages
+  H-->>You: the answer: title, page and an exact quote for each claim
+</div>
+<p class="muted">The facet selects what search_papers searches: <b>concept</b> (title and abstract, all papers), <b>methods</b> or <b>results</b> (the summaries, full-text papers only).</p>
+
+<h2>3. Adding a paper</h2>
+<div class="mermaid">
+flowchart TD
+  A["save_paper(ref)"] --> AO["abstract-only paper<br/>metadata + abstract + its embedding"]
+  B["ingest_pdf(ref or local path)"] --> D["download the PDF<br/>(arXiv, OpenAlex open-access copy)"]
+  D --> P["parse with marker: Markdown, figures, tables"]
+  P --> C["chunks of about 1500 characters,<br/>each with its pages"]
+  C --> E["embeddings of the chunks (CPU)"]
+  E --> S["methods and results summaries<br/>(the summary model; a local PDF also gets its title and authors)"]
+  S --> FT["full-text paper"]
+  S -. "if the model is not available" .-> PEND["pending: phdcode summarize does it later"]
+</div>
+
+<h2>4. The daily sweep</h2>
+<div class="mermaid">
+flowchart TD
+  T["06:00 timer"] --> Q["each saved search: its query at its source,<br/>the last 7 days, at most 50 hits"]
+  Q --> N{"judged before?"}
+  N -- "yes" --> X["skip"]
+  N -- "no" --> R["triage: the probability that the hit<br/>matches the interest statement"]
+  R --> H["record it in triaged hits"]
+  H --> TH{"at or above the threshold?"}
+  TH -- "yes" --> SV["save as an abstract-only paper<br/>+ a line in today's digest"]
+  TH -- "no" --> NO["only the count in the digest"]
+  SV --> SM["then: phdcode summarize"]
+</div>
+
+<h2>5. The GPU: one tenant at a time</h2>
+<div class="mermaid">
+flowchart LR
+  L["llama-server, 14.4 GB<br/>starts at the first request,<br/>stops 30 minutes after the last"] --> G[("RTX 5070 Ti, 16 GB<br/>/tmp/gpu.lock")]
+  J["short jobs: the parse (about 5 GB),<br/>triage (about 3 GB)<br/>GPU only if faster, waits included;<br/>else the CPU"] --> G
+  TR["training<br/>phdcode gpu clear, train,<br/>phdcode gpu restore"] --> G
+</div>
+
+<h2>The tools that a chat can call</h2>
+<div class="scroll"><table>
+<tr><th>Tool</th><th>What it does</th><th>Writes?</th></tr>
+<tr><td>search_sources</td><td>Searches arXiv, PubMed or OpenAlex live.</td><td>no</td></tr>
+<tr><td>get_paper</td><td>The details of one paper, at the source or stored.</td><td>no</td></tr>
+<tr><td>search_papers</td><td>Hybrid search over the stored papers, by facet.</td><td>no</td></tr>
+<tr><td>search_chunks</td><td>Hybrid search over the full text: passages with pages.</td><td>no</td></tr>
+<tr><td>list_saved_searches</td><td>The active saved searches.</td><td>no</td></tr>
+<tr><td>save_paper</td><td>Stores an abstract-only paper.</td><td>yes</td></tr>
+<tr><td>ingest_pdf</td><td>Makes a full-text paper from a reference or a local PDF.</td><td>yes</td></tr>
+<tr><td>add_saved_search</td><td>Adds a standing query with its interest statement and threshold.</td><td>yes</td></tr>
+<tr><td>cancel_saved_search</td><td>Stops a saved search.</td><td>yes</td></tr>
+</table></div>
+<p class="muted">A tool that writes needs your approval in the dcode TUI. Headless dcode (<code>dcode -n</code>) can run only the tools that do not write.</p>
+{% endblock %}

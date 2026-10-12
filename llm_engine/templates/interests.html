@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Interests · phdcode{% endblock %}
+{% block main %}
+<h1>Interests</h1>
+
+<h2>Interest profile</h2>
+<div class="panel">
+  <p><span class="warn">Not built yet.</span> It will come from your Zotero reference list: the topics, methods and data of the papers that you keep. From it come the saved searches below.</p>
+  <p class="muted">Until then, the interest statements of the saved searches are the whole profile: triage judges each new hit against the statement of its search.</p>
+</div>
+
+<h2>Saved searches</h2>
+{% for s in searches %}
+<div class="panel" id="s{{ s.id }}">
+  <div><b>Saved search {{ s.id }}</b> · {{ s.source }}
+    {% if s.cancelled_at %}<span class="tag bad">cancelled {{ s.cancelled_at|when }}</span>{% else %}<span class="tag ok">active</span>{% endif %}</div>
+  <p><b>Interest:</b> {{ s.interest }}</p>
+  <div><b>Query:</b> <code>{{ s.query }}</code></div>
+  <div class="muted">Threshold {{ "%.2f"|format(s.threshold) }} · created {{ s.created_at|when }} · last sweep {{ s.last_swept_at|when or "never" }} · {{ s.hits }} hits judged, {{ s.relevant }} at or above the threshold</div>
+  {% if hits.get(s.id) %}
+  <details><summary>The judged hits, highest probability first</summary>
+  <div class="scroll"><table>
+  <tr><th>Probability</th><th>Hit</th><th>Judged</th></tr>
+  {% for h in hits[s.id] %}
+  <tr><td class="{{ 'ok' if h.probability >= s.threshold }}">{{ "%.3f"|format(h.probability) }}</td>
+      <td>{% if h.paper_id %}<a href="/papers/{{ h.paper_id }}">{{ h.title }}</a>{% else %}<a href="{{ source_url(s.source, h.source_id) }}">{{ s.source }}:{{ h.source_id }}</a> <span class="muted">(not saved)</span>{% endif %}</td>
+      <td>{{ h.triaged_at|when }}</td></tr>
+  {% endfor %}
+  </table></div></details>
+  {% endif %}
+</div>
+{% else %}
+<div class="panel muted">No saved searches yet. Ask the chat to add one (the tool add_saved_search), or wait for the interest profile.</div>
+{% endfor %}
+{% endblock %}

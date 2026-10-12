@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}phdcode{% endblock %}</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e2e2e0;
+  --accent: #2f5d8a; --ok: #2e7d4f; --warn: #a86a00; --bad: #b3261e; --code: #f0f0ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161618; --panel: #1f1f22; --text: #e8e8ea; --muted: #9a9aa0; --line: #33333a;
+    --accent: #8ab4f8; --ok: #6fcf97; --warn: #f2c94c; --bad: #f28b82; --code: #2a2a2e;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 10px 16px;
+  display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline; }
+header b { font-size: 17px; margin-right: 8px; }
+header a { color: var(--muted); text-decoration: none; }
+header a.on, header a:hover { color: var(--accent); }
+main { max-width: 1150px; margin: 0 auto; padding: 18px 16px 60px; }
+a { color: var(--accent); }
+h1 { font-size: 22px; margin: 4px 0 14px; }
+h2 { font-size: 17px; margin: 26px 0 10px; }
+.muted { color: var(--muted); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+.card .n { font-size: 26px; font-weight: 600; }
+.card .l { color: var(--muted); font-size: 13px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; background: var(--panel); }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 13px; color: var(--muted); font-weight: 600; }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); white-space: nowrap; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+pre, code { background: var(--code); border-radius: 4px; }
+pre { padding: 10px; overflow-x: auto; white-space: pre-wrap; }
+code { padding: 0 4px; }
+details { border-bottom: 1px solid var(--line); padding: 6px 0; }
+summary { cursor: pointer; }
+.gallery { display: flex; flex-wrap: wrap; gap: 10px; }
+.gallery img { max-height: 180px; max-width: 100%; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+.md img { max-width: 100%; background: #fff; }
+.md table { width: auto; }
+input[type=search] { width: 100%; max-width: 420px; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--panel); color: var(--text); margin-bottom: 10px; }
+.mermaid { background: #fff; border-radius: 8px; padding: 10px; overflow-x: auto; }
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+<header>
+  <b>phdcode</b>
+  {% set here = request.url.path %}
+  <a href="/" class="{{ 'on' if here == '/' }}">Overview</a>
+  <a href="/interests" class="{{ 'on' if here.startswith('/interests') }}">Interests</a>
+  <a href="/papers" class="{{ 'on' if here.startswith('/papers') }}">Papers</a>
+  <a href="/digests" class="{{ 'on' if here.startswith('/digests') }}">Digests</a>
+  <a href="/how" class="{{ 'on' if here.startswith('/how') }}">How it works</a>
+</header>
+<main>
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>
