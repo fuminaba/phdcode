@@ -17,6 +17,7 @@ from typing import Any, Optional
 import requests
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 
 from . import sources
 from .embeddings import embed
@@ -65,18 +66,30 @@ async def _lifespan(_server: MCPServer):
 server = MCPServer("phdcode", instructions=INSTRUCTIONS, lifespan=_lifespan)
 
 
-def tool(fn):
+def tool(fn=None, *, read_only=False):
     """server.tool(), and an expected failure (bad input, a source or a
     download that fails) becomes a ToolError, so that the agent reads the
     reason. MCPServer hides the message of any other exception and logs it
-    as a crash."""
+    as a crash.
+
+    read_only=True sets readOnlyHint: a client can then run the tool with no
+    approval (headless dcode rejects each MCP tool without it).
+
+    No output schema (structured_output=False): the result is JSON text. A
+    schema makes the MCP client validate the result, and in dcode 0.1.73 that
+    validation imports jsonschema on the server event loop, which stops the
+    run with a BlockingError."""
+    if fn is None:
+        return functools.partial(tool, read_only=read_only)
+
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         try:
             return await fn(*args, **kwargs)
         except (ValueError, RuntimeError, requests.RequestException) as e:
             raise ToolError(str(e)) from e
-    return server.tool()(wrapper)
+    annotations = ToolAnnotations(read_only_hint=True) if read_only else None
+    return server.tool(annotations=annotations, structured_output=False)(wrapper)
 
 
 async def _embed_one(text: str) -> list[float]:
@@ -111,7 +124,7 @@ def _download_pdf(url: str) -> bytes:
     return response.content
 
 
-@tool
+@tool(read_only=True)
 async def search_sources(query: str, source: str, max_results: int = 10) -> list[dict[str, Any]]:
     """Searches arXiv, PubMed or OpenAlex live. Returns an overview of each hit (ref,
     title, authors, date, venue); call get_paper(ref) for the abstract.
@@ -131,7 +144,7 @@ async def search_sources(query: str, source: str, max_results: int = 10) -> list
     return [_overview(r) for r in records]
 
 
-@tool
+@tool(read_only=True)
 async def get_paper(paper: str) -> dict[str, Any]:
     """The details of one paper. paper is a reference from search_sources
     ('arxiv:2401.12345', 'pubmed:33649564', 'openalex:W7221365635') or a
@@ -215,7 +228,7 @@ async def ingest_pdf(paper: str) -> dict[str, Any]:
     }
 
 
-@tool
+@tool(read_only=True)
 async def search_papers(query: str, facet: str = "concept", max_results: int = 5) -> list[dict[str, Any]]:
     """Hybrid search (meaning and keywords) over the stored papers.
 
@@ -245,7 +258,7 @@ async def search_papers(query: str, facet: str = "concept", max_results: int = 5
     ]
 
 
-@tool
+@tool(read_only=True)
 async def search_chunks(
         query: str, paper_ids: Optional[list[int]] = None, max_results: int = 5,
 ) -> list[dict[str, Any]]:
@@ -282,7 +295,7 @@ async def add_saved_search(source: str, query: str, interest: str, threshold: fl
     return {"saved_search_id": saved_search_id}
 
 
-@tool
+@tool(read_only=True)
 async def list_saved_searches() -> list[dict[str, Any]]:
     """The saved searches that are not cancelled."""
     return [
