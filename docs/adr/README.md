@@ -28,7 +28,7 @@ superseded most of them. Read 0006 and 0014 to 0017 for the current design.
 | [0014](0014-new-repository-phdcode.md) | New repository, named phdcode | Accepted |
 | [0015](0015-rescope-to-literature-rag-tool.md) | Rescope phdcode to a literature RAG tool | Accepted |
 | [0016](0016-mcp-server-is-the-only-integration.md) | An MCP server over stdio is the only integration | Accepted |
-| [0017](0017-gpu-main-slot.md) | GPU policy: embeddings on the CPU, one tenant on the GPU | Proposed |
+| [0017](0017-gpu-main-slot.md) | GPU policy: embeddings on the CPU, one tenant on the GPU | Accepted (revised 2026-10-11; `balanced` deferred) |
 
 An ADR is valid while its premises are true. To re-open one, name the premise
 that changed, and supersede it in a new ADR. Edit only the status line of the

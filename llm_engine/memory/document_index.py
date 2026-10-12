@@ -9,8 +9,8 @@ from typing import Any, NamedTuple, Optional
 from dotenv import load_dotenv
 
 try:
-    from ..documents import PAPERS_DIR, PARSE_VRAM_MIB, text_path_for
-    from ..gpu import gpu_free
+    from ..documents import PAPERS_DIR, PARSE_VRAM_MIB, parse_seconds, text_path_for
+    from ..gpu import short_job
     from ..embeddings import embed
     from ..generation import generate
     from ..prompts import (
@@ -21,8 +21,8 @@ try:
     )
     from ..schemas import PAPER_METADATA_SCHEMA
 except ImportError:
-    from documents import PAPERS_DIR, PARSE_VRAM_MIB, text_path_for
-    from gpu import gpu_free
+    from documents import PAPERS_DIR, PARSE_VRAM_MIB, parse_seconds, text_path_for
+    from gpu import short_job
     from embeddings import embed
     from generation import generate
     from prompts import (
@@ -68,8 +68,8 @@ CHUNK_OVERLAP = int(os.getenv("DOCUMENT_CHUNK_OVERLAP", "200"))
 MAP_CHUNK_SIZE = int(os.getenv("DOCUMENT_MAP_CHUNK_SIZE", "8000"))
 MAP_CHUNK_OVERLAP = 300
 
-# documents.py parses with no OCR, on the GPU if it is free, else on the CPU
-# (ADR-0017). The drain upgrades
+# documents.py parses with no OCR, on the GPU if that is faster, else on the
+# CPU (ADR-0017). The drain upgrades
 # a 'text' paper to 'balanced'.
 PARSE_MODE = "text"
 
@@ -229,23 +229,33 @@ async def run_pending_steps(model_name: Optional[str] = None) -> list[str]:
 
 async def _parse_pdf(pdf_path: Path) -> Path:
     """Runs documents.py in a subprocess (see its docstring), on the GPU if
-    it is free (ADR-0017, item 8), else on the CPU. A parse that fails on the
-    GPU (for example, out of memory) runs again on the CPU. Its output goes
-    to parse.log next to the PDF. Returns the path of the markdown file."""
+    that is faster (gpu.short_job), else on the CPU. A parse that fails on
+    the GPU (for example, out of memory) runs again on the CPU. Its output
+    goes to parse.log next to the PDF. Returns the path of the markdown file."""
     log_path = pdf_path.parent / "parse.log"
-    devices = ["cuda", "cpu"] if await asyncio.to_thread(gpu_free, PARSE_VRAM_MIB) else ["cpu"]
     with log_path.open("wb") as log_file:
-        for device in devices:
+
+        async def run(device: str) -> int:
             log.info("parse of %s on %s", pdf_path.name, device)
             process = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "llm_engine.documents", str(pdf_path), device,
                 stdin=asyncio.subprocess.DEVNULL, stdout=log_file, stderr=log_file,
             )
-            code = await process.wait()
-            if code == 0:
-                return text_path_for(pdf_path)
-            log.warning("the parse on %s failed (exit code %s); see %s", device, code, log_path)
-    raise RuntimeError(f"The PDF parse failed (exit code {code}); see {log_path}.")
+            return await process.wait()
+
+        gpu_seconds, cpu_seconds = await asyncio.to_thread(parse_seconds, pdf_path)
+        job = short_job(PARSE_VRAM_MIB, gpu_seconds, cpu_seconds, f"parse of {pdf_path.name}")
+        device = await asyncio.to_thread(job.__enter__)  # it can wait for the lock
+        try:
+            code = await run(device)
+        finally:
+            job.__exit__(None, None, None)
+        if code != 0 and device == "cuda":
+            log.warning("the parse on the GPU failed (exit code %s); it runs again on the CPU", code)
+            code = await run("cpu")
+    if code != 0:
+        raise RuntimeError(f"The PDF parse failed (exit code {code}); see {log_path}.")
+    return text_path_for(pdf_path)
 
 
 async def extract_paper_metadata(paper_id: int, text: str, model_name: Optional[str] = None) -> None:

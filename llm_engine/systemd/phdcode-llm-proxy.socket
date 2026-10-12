@@ -1,0 +1,15 @@
+# The port of llama-server (the route bonsai2-27b in LLM_ROUTING). The first
+# connection starts phdcode-llm-proxy.service, which starts llama-server
+# (ADR-0017). Install with the others (see phdcode-sweep.timer):
+#
+#   systemctl --user link <repo>/llm_engine/systemd/phdcode-llm.service
+#   systemctl --user link <repo>/llm_engine/systemd/phdcode-llm-proxy.service
+#   systemctl --user enable --now <repo>/llm_engine/systemd/phdcode-llm-proxy.socket
+[Unit]
+Description=phdcode: the port of llama-server; the first request starts it
+
+[Socket]
+ListenStream=8080
+
+[Install]
+WantedBy=sockets.target

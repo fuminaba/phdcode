@@ -30,6 +30,15 @@ PARSE_THREADS = max(1, (os.cpu_count() or 2) // 2)
 # context, plus a margin.
 PARSE_VRAM_MIB = 6144
 
+
+def parse_seconds(pdf_path: Path) -> tuple[float, float]:
+    """The expected time of a parse: (on the GPU, on the CPU). Measured on a
+    5-page paper: 22 s and 197 s, of which about 15 s is the model load and
+    the layout model takes 29 s for each page on the CPU."""
+    import pypdfium2
+    pages = len(pypdfium2.PdfDocument(str(pdf_path)))
+    return 20 + 1 * pages, 15 + 36 * pages
+
 # Matches a run of consecutive markdown table rows (header, separator, data).
 _TABLE_PATTERN = re.compile(r"((?:^\|.*\|\s*\n)+)", re.MULTILINE)
 

@@ -7,9 +7,9 @@ generated text. Each pair is scored alone, so a score does not depend on the
 other hits. The scores are not calibrated: the labelled set selects the
 threshold.
 
-The reranker runs on the GPU if the GPU is not cleared (ADR-0017) and has
-TRIAGE_VRAM_MIB free; else, or if CUDA runs out of memory, on the CPU with
-half the cores. On the GPU a hit takes about 16 ms, on the CPU about 3 s.
+The reranker runs on the GPU if that is faster, waits included
+(gpu.short_job, ADR-0017); else, or if CUDA runs out of memory, on the CPU
+with half the cores. On the GPU a hit takes about 16 ms, on the CPU about 3 s.
 
 The fallback is an LLM with structured output (TRIAGE_MODEL, default
 SUMMARY_MODEL): set TRIAGE_RERANKER to "" to use it, and decide() also uses
@@ -22,7 +22,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 
 from .generation import generate
-from .gpu import gpu_free
+from .gpu import short_job
 from .prompts import triage_prompt
 from .schemas import TRIAGE_SCHEMA
 
@@ -45,6 +45,11 @@ _SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 
 class Reranker:
+    """Loaded once on the CPU. Each score() call moves it to the GPU if that
+    is faster (gpu.short_job), and back to the CPU after. The GPU copy is
+    bf16, the precision of the checkpoint, so the round trip changes no
+    weight."""
+
     def __init__(self, name: str):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -52,35 +57,37 @@ class Reranker:
         self.tokenizer = AutoTokenizer.from_pretrained(name, padding_side="left")
         self.model = AutoModelForCausalLM.from_pretrained(name, dtype=torch.float32).eval()
         self.yes_no = [self.tokenizer.convert_tokens_to_ids(t) for t in ("no", "yes")]
-        self.device = "cpu"
-        if gpu_free(TRIAGE_VRAM_MIB):
-            try:
-                self.model.to("cuda", torch.float16)
-                self.device = "cuda"
-            except torch.cuda.OutOfMemoryError:
-                self._to_cpu()
-        log.info("reranker %s on %s", name, self.device)
-
-    def _to_cpu(self) -> None:
-        import torch
-        self.model.to("cpu", torch.float32)
-        torch.cuda.empty_cache()
-        self.device = "cpu"
 
     def score(self, interest: str, hits: list[dict[str, Any]]) -> list[float]:
         import torch
         texts = [f"{_PREFIX}<Instruct>: {_TASK}\n<Query>: {interest}\n<Document>: Title: {h['title']}\n"
                  f"Abstract: {h['abstract_text'] or '(none)'}{_SUFFIX}" for h in hits]
+        # Measured: 16 ms for each hit on the GPU, plus about 3 s to move the
+        # model and start CUDA; 3.1 s for each hit on the CPU.
+        with short_job(TRIAGE_VRAM_MIB, 3 + 0.02 * len(texts), 3.1 * len(texts), "triage") as device:
+            try:
+                return self._score(texts, device)
+            finally:
+                if device == "cuda":
+                    self.model.to("cpu", torch.float32)
+                    torch.cuda.empty_cache()
+
+    def _score(self, texts: list[str], device: str) -> list[float]:
+        import torch
         scores: list[float] = []
         while len(scores) < len(texts):
-            batch = texts[len(scores):len(scores) + _BATCH[self.device]]
-            inputs = self.tokenizer(batch, return_tensors="pt", padding=True, add_special_tokens=False)
             try:
+                if device == "cuda" and self.model.device.type != "cuda":
+                    self.model.to("cuda", torch.bfloat16)
+                batch = texts[len(scores):len(scores) + _BATCH[device]]
+                inputs = self.tokenizer(batch, return_tensors="pt", padding=True, add_special_tokens=False)
                 with torch.no_grad():
-                    logits = self.model(**inputs.to(self.device)).logits[:, -1, self.yes_no].float()
+                    logits = self.model(**inputs.to(device)).logits[:, -1, self.yes_no].float()
             except torch.cuda.OutOfMemoryError:
                 log.warning("reranker: CUDA out of memory; the rest runs on the CPU")
-                self._to_cpu()
+                self.model.to("cpu", torch.float32)
+                torch.cuda.empty_cache()
+                device = "cpu"
                 continue
             scores += torch.softmax(logits, dim=1)[:, 1].tolist()
         return scores

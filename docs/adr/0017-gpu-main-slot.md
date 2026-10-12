@@ -1,7 +1,8 @@
 # ADR-0017: GPU policy — embeddings on the CPU, one tenant on the GPU
 
-**Status:** Proposed — 2026-10-10. It becomes Accepted after the VRAM test of
-the capped Surya server.
+**Status:** Accepted — 2026-10-11 (revised from the proposal of 2026-10-10).
+The `balanced` mode (Surya, item 9) stays Proposed until a PDF needs it and the
+VRAM test runs.
 **Supersedes:** [ADR-0007](0007-gpu-arbitration-via-os-level-lock.md), [ADR-0008](0008-retire-celery-and-redis.md)
 
 ## Context
@@ -30,72 +31,81 @@ ADR-0008 deleted Celery. Celery stays deleted. ADR-0008 accepted that ingest is
 not durable across a crash; the `parse_mode` of a paper now makes the upgrade
 durable.
 
+## Revision (2026-10-11)
+
+The proposal made a drain on the timer the main GPU job: it swapped
+llama-server for Surya and upgraded each paper from the CPU text parse to
+`balanced`. One premise changed: **the text parse runs on the GPU in 22 s for
+a 5-page paper, against 197 s on the CPU, with the same text** (measured
+2026-10-11). The upgrade adds only OCR, which only a PDF with a bad text layer
+needs (a scan, some old PubMed PDFs). So the drain is now `phdcode summarize`
+after the sweep, and Surya waits for a real need (item 9).
+
 ## Decision
 
 1. **Embeddings run on the CPU all the time** (Ollama `num_gpu: 0`). `embed()`
    never uses the GPU and takes no lock.
-2. **The GPU has one tenant at a time:** the local LLM (llama-server, a systemd
-   user unit), Surya (vLLM on this machine, with a VRAM cap), or training. A
-   phdcode tenant takes `flock /tmp/gpu.lock` for its full life, and checks the
-   free VRAM (`nvidia-smi`) before it starts.
-3. **The settings** (`.env`):
-   - `AGENT_BACKEND`: the route of the model that drives the harness.
-   - `SUMMARY_MODEL`: the route for summaries. The default is `AGENT_BACKEND`.
-   - the VRAM cap of Surya, and the idle time before a swap or a stop (default
-     30 minutes).
-4. **`ingest_pdf`** never starts a GPU tenant. If Surya runs, it parses in
-   `balanced` mode at once. If not, it parses in text mode (item 8) and sets
-   `parse_mode = text`. It stores the chunks first, then makes the summaries
-   through `SUMMARY_MODEL`. If a summary step fails for any reason (the server
-   is stopped, no model is set, the reply is not valid), the summaries are
-   pending: a full-text paper with no methods summary. `ingest_pdf` tells the
-   agent why.
-5. **The drain** runs on the timer. It exits if the GPU is cleared (item 6) or
-   if the lock is held.
-   - With a hosted `AGENT_BACKEND`: it starts Surya, upgrades each paper with
-     `parse_mode = text`, and makes the pending summaries. Surya stays up until
-     it is idle for the idle time, so that new ingests get `balanced` at once.
-     Then the drain stops it.
-   - With a local `AGENT_BACKEND`: it acts only when llama-server is idle for
-     the idle time. It stops llama-server, starts Surya, upgrades the papers,
-     stops Surya, starts llama-server, and makes the pending summaries. A
-     request during the swap fails with "connection refused", not with an
-     out-of-memory error.
-6. **Training.** Before a training run, the user runs `phdcode gpu clear`. It
-   takes the lock (it waits for a drain), stops Surya and llama-server, writes
-   the state file `/tmp/gpu.cleared`, and releases the lock. While the file
-   exists, no phdcode tenant starts. After training, the user runs
-   `phdcode gpu restore`, which deletes the file. Training launchers do not
-   change.
-7. **No Celery, no Redis, no queue table.** A crash during the drain leaves the
-   papers in `parse_mode = text`, and the next drain does them again.
-8. **Triage and the text-mode parse are short GPU jobs, not tenants.** Each
-   uses the GPU only if `/tmp/gpu.cleared` does not exist and its VRAM is
-   free (the reranker 4 GB, the parse 6 GB); else it runs on the CPU. If CUDA
-   runs out of memory, the job continues or runs again on the CPU. The check
-   reads the free VRAM outside the process (`gpu.free_vram_mib()`), so a job
-   on the CPU holds no CUDA context. Measured: a sweep of 37 hits took 20 s
-   on the GPU, against about 2 minutes of triage on the CPU; a 5-page parse
-   took 22 s on the GPU and 197 s on the CPU, with the same text. With the
-   lock (step 5), a short job takes the lock without a wait, and uses the CPU
-   if the lock is held. While a local LLM holds the GPU (Bonsai 2 27B: 14.4
-   GB), both jobs use the CPU.
+2. **The GPU has one tenant at a time:** the local LLM (llama-server) or
+   training. A phdcode tenant holds `flock /tmp/gpu.lock` for its full life,
+   and checks the free VRAM before it starts.
+3. **llama-server starts on demand.** systemd listens on its port
+   (`phdcode-llm-proxy.socket`); the first request starts the proxy, which
+   starts llama-server (`phdcode-llm.service`, about 10 s with the model
+   files in the page cache). The proxy exits after 30 minutes with no
+   connection, and llama-server stops with it. So llama-server runs around
+   the sweep and while a chat on a local model sends requests, and nothing
+   detects a chat. llama-server does not start while the GPU is cleared or
+   while less than 14.5 GB of VRAM is free.
+4. **Short jobs: the text parse and triage.** Each uses the GPU only if that
+   is faster than the CPU, waits included (`gpu.short_job()`):
+   - cleared, or llama-server runs: the CPU at once (neither ends soon);
+   - another short job holds the lock: wait for it, but at most as long as
+     the GPU saves (the expected time on the CPU minus on the GPU); then the
+     CPU;
+   - less VRAM free than the job needs (the reranker 4 GB, the parse 6 GB),
+     for example a training run without `phdcode gpu clear`: the CPU.
+
+   If CUDA runs out of memory, the job continues or runs again on the CPU.
+   The VRAM check runs outside the process (`gpu.free_vram_mib()`), so a job
+   on the CPU holds no CUDA context. Measured: a 5-page parse 22 s on the GPU
+   and 197 s on the CPU; triage 16 ms and 3.1 s for each hit.
+5. **The settings** (`.env`): `AGENT_BACKEND` (the route of the model that
+   drives the harness) and `SUMMARY_MODEL` (the route for summaries; the
+   default is `AGENT_BACKEND`).
+6. **`ingest_pdf`** never starts a tenant. It parses in text mode (item 4),
+   stores the chunks, then makes the summaries through `SUMMARY_MODEL`, which
+   can start llama-server (item 3). If a summary step fails for any reason
+   (the GPU is cleared, no model is set, the reply is not valid), the
+   summaries are pending, and `ingest_pdf` tells the agent why.
+7. **The timer** runs the sweep, then `phdcode summarize`, which makes the
+   pending summaries.
+8. **Training.** Before a training run, the user runs `phdcode gpu clear`. It
+   writes `/tmp/gpu.cleared`, stops llama-server and its socket (a request
+   then fails at once), and waits for a short job to release the lock. While
+   the file exists, no phdcode GPU user starts. After training, the user runs
+   `phdcode gpu restore`: it deletes the file and starts the socket again.
+   Training launchers do not change.
+9. **Deferred: the `balanced` mode.** marker 2 with a capped Surya vLLM server
+   adds OCR. Add it when a PDF with a bad text layer needs it, after the VRAM
+   test. The `parse_mode` of a paper is then the queue of the upgrade.
+10. **No Celery, no Redis, no queue table.**
 
 ## Consequences
 
-- Search and ingest never wait for the GPU.
+- Search and ingest never wait long for the GPU: a short job waits at most
+  the time that the GPU saves.
 - Embeddings use the CPU that training also uses (data loaders). The cost comes
   only during an ingest or a sweep: about 6 s for a paper of 100 chunks.
-- A forgotten `phdcode gpu restore` stops all upgrades. Each digest says so
-  while `/tmp/gpu.cleared` exists.
-- A training run without `phdcode gpu clear` shares the card with any phdcode
-  tenant. The admission check stops a new phdcode tenant, but it cannot stop a
+- The first request to a stopped llama-server waits about 10 s for the load.
+- While llama-server runs (up to 30 minutes after the last request), the parse
+  and triage use the CPU.
+- A training run without `phdcode gpu clear` shares the card with phdcode: the
+  VRAM check stops a new llama-server or short job, but nothing stops the
   training run.
-- phdcode starts and stops llama-server, so llama-server runs as a systemd user
-  unit, not in tmux.
-
-- Until the lock exists, a training run that starts without `phdcode gpu
-  clear` during a sweep can meet the reranker on the card for some seconds.
+- If llama-server cannot start (too little VRAM), the socket can stop after
+  repeated requests; `phdcode gpu restore` starts it again.
+- A forgotten `phdcode gpu restore` stops llama-server and the GPU use of
+  phdcode; the summaries stay pending.
 
 ## Alternatives rejected
 
@@ -109,6 +119,15 @@ durable.
 - **Training launchers take the lock.** It needs a change in each launcher.
 - **A lock for each call** (ADR-0007). It does not protect a model that stays
   loaded, and it made search wait.
+- **The drain as the main GPU job** (the proposal of 2026-10-10): stop
+  llama-server, start Surya, upgrade each text paper, start llama-server. The
+  GPU text parse made the upgrade useful only for OCR (see "Revision").
+- **llama-server all the time.** It holds 14.4 GB, so the parse and triage
+  would use the CPU all day, and each training run would need a clear.
+- **A short job always waits for the lock.** An ingest could wait for an idle
+  llama-server for 30 minutes.
+- **A short job never waits.** Two parses at the same time would put the
+  second on the CPU, which can take minutes longer than a short wait.
 - **Surya beside a local LLM.** They do not fit on the card together.
 - **A driver limit for each process (MPS pinned device memory).** Not verified
   on a GeForce card, and MPS changes the scheduling of all processes, training

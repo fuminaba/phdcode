@@ -1,0 +1,21 @@
+# llama-server, the GPU tenant (ADR-0017). It holds /tmp/gpu.lock for its full
+# life. It does not start while the GPU is cleared (`phdcode gpu clear`), or if
+# less VRAM is free than Bonsai 2 27B needs (14,424 MiB measured). Then a
+# request fails with "connection refused", not with out of memory.
+[Unit]
+Description=phdcode: llama-server (Bonsai 2 27B), the GPU tenant
+StopWhenUnneeded=yes
+
+[Service]
+ExecCondition=/bin/sh -c '! test -e /tmp/gpu.cleared'
+# The paths of the phdcode env, the llama.cpp build and the presets. The
+# shell takes the lock on fd 9 and execs llama-server, which keeps fd 9: so
+# llama-server is the main process and holds the lock until it exits.
+ExecStart=/bin/sh -c 'exec 9>>/tmp/gpu.lock && flock 9 && %h/miniconda3/envs/alira/bin/phdcode gpu check 14500 && exec %h/Desktop/dev/llama.cpp-prism/build/bin/llama-server --models-preset %h/models/alira-models.ini --models-max 1 --host 127.0.0.1 --port 8081'
+# Ready when the model is loaded; give up if llama-server exits first.
+ExecStartPost=/bin/sh -c 'until curl -s http://127.0.0.1:8081/models | grep -q "\\"value\\":\\"loaded\\""; do kill -0 $MAINPID || exit 1; sleep 2; done'
+TimeoutStartSec=600
+# SIGTERM to the router only; it stops its model process. A SIGTERM to both
+# at once left the router hanging until the stop timeout (90 s).
+KillMode=mixed
+TimeoutStopSec=30
