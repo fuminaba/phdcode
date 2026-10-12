@@ -61,12 +61,12 @@ the probability only. *Not* a generated summary.
 the relevant hits, each with its triage probability, and the hits that wait
 for triage.
 
-**Drain** — the timer pass that makes Surya the tenant, upgrades every
-paper in *text* parse mode, and makes the pending summaries. CLI only, never a
-tool.
+**Drain** — the timer pass after the sweep that makes the pending summaries
+(`phdcode summarize`). CLI only, never a tool. The upgrade of *text* papers to
+*balanced* is deferred (ADR-0017).
 
 **Cleared GPU** — the state between `phdcode gpu clear` and `phdcode gpu
-restore`: no phdcode tenant starts, so that training has the whole card.
+restore`: no phdcode GPU user starts, so that training has the whole card.
 
 ## System
 
@@ -92,8 +92,11 @@ Most are both.* The practical test: **can this block someone else's turn?**
 **GPU lock** — the exclusive `flock` that a phdcode tenant holds for its full
 life (ADR-0017). *Not* a lock for each request.
 
-**Tenant** — the one workload that holds the GPU: the local LLM, Surya, or
-training. Embeddings are never a tenant; they run on the CPU.
+**Tenant** — the one workload that holds the GPU for a long time: the local
+LLM or training. Embeddings are never a tenant; they run on the CPU.
+
+**Short job** — a GPU job of seconds (the text parse, triage) that uses the GPU
+only if that is faster than the CPU, waits included. *Not* a tenant.
 
 **Agent backend** — the setting that names the model that drives the harness. If
 it is local, the local LLM is the usual tenant. *Not* chosen by

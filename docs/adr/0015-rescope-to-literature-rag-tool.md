@@ -73,9 +73,9 @@ any agent harness. The vocabulary is in [GLOSSARY.md](../GLOSSARY.md).
    only sets the order of the hits in the digest. If the model needs the GPU
    and the GPU is not available, the hits wait for the next sweep.
 8. **Ingest.** A sweep stores only abstracts. A paper gets its full text only on
-   request: `ingest_pdf` parses the PDF at once, in `balanced` mode if Surya
-   runs, or else in text mode on the CPU. The drain does the upgrade to
-   `balanced` mode later ([ADR-0017](0017-gpu-main-slot.md)). The
+   request: `ingest_pdf` parses the PDF at once in text mode, on the GPU if
+   that is faster. The upgrade to `balanced` mode (OCR) is deferred until a
+   PDF needs it ([ADR-0017](0017-gpu-main-slot.md), revised 2026-10-11). The
    `parse_mode` of a paper is the queue. There is no queue table.
 9. **Model calls.** Summaries and other generated text use a model name that
    `llm_engine/routes.py` resolves to an endpoint. The summary model is the

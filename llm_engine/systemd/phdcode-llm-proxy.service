@@ -1,0 +1,12 @@
+# Forwards port 8080 (phdcode-llm-proxy.socket) to llama-server, and exits
+# after 30 minutes with no connection; llama-server then stops
+# (StopWhenUnneeded). So llama-server runs around the sweep and while a chat
+# on a local model sends requests.
+[Unit]
+Description=phdcode: forward to llama-server; exit after 30 idle minutes
+# BindsTo: this proxy stops with llama-server, so no proxy stays up without it.
+BindsTo=phdcode-llm.service
+After=phdcode-llm.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=30min 127.0.0.1:8081
