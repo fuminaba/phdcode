@@ -45,6 +45,8 @@
   <h2>Figures</h2>
   <div class="gallery">{% for i in images %}<a href="/papers/{{ p.id }}/files/{{ i }}"><img src="/papers/{{ p.id }}/files/{{ i }}" alt="{{ i }}" loading="lazy"></a>{% endfor %}</div>
   {% endif %}
+{% elif queue.pdf_error %}<span class="bad">The PDF failed: {{ queue.pdf_error }}</span><div class="muted">Source: {{ queue.pdf_source }}. Download it yourself and give its path to ingest_pdf.</div>
+{% elif queue.pdf_source %}<span class="warn">The PDF is in the queue: <code>phdcode ingest</code> parses it.</span><div class="muted">Source: {{ queue.pdf_source }}</div>
 {% else %}<span class="muted">No files: the PDF of this paper is not ingested.</span>{% endif %}
 </div>
 

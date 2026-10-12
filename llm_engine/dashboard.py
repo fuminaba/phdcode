@@ -69,6 +69,10 @@ def _page(request: Request, template: str, **context: Any):
 def _paper_state(p: dict[str, Any]) -> str:
     if p["parse_mode"]:
         return "full text" if p["summarized"] else "full text, summaries pending"
+    if p["pdf_error"]:
+        return "PDF failed"
+    if p["pdf_source"]:
+        return "PDF queued"
     # PubMed's pdf_url is the PMC page, which ingest_pdf refuses.
     if p["pdf_url"] and p["source"] != "pubmed":
         return "abstract only, PDF link known"
@@ -138,7 +142,7 @@ async def _fetch(query: str, *args: Any) -> list[dict[str, Any]]:
 
 _PAPERS_SQL = (
     "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, p.pdf_url, "
-    "       p.parse_mode, p.created_at, "
+    "       p.parse_mode, p.created_at, p.pdf_source, p.pdf_error, "
     "       (p.methods_summary IS NOT NULL AND p.results_summary IS NOT NULL) AS summarized, "
     "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks "
     "FROM papers p ORDER BY p.id DESC"
@@ -185,7 +189,8 @@ async def paper(request: Request, paper_id: int):
     stored = await get_paper(paper_id)
     if stored is None:
         raise HTTPException(404, f"No paper has id {paper_id}.")
-    chunks, hits = await asyncio.gather(
+    queue, chunks, hits = await asyncio.gather(
+        _fetch("SELECT pdf_source, pdf_error FROM papers WHERE id = $1", paper_id),
         _fetch("SELECT chunk_index, page_start, page_end, content FROM chunks "
                "WHERE paper_id = $1 ORDER BY chunk_index", paper_id),
         _fetch("SELECT t.saved_search_id, t.probability, t.triaged_at, s.threshold FROM triaged_hits t "
@@ -194,7 +199,7 @@ async def paper(request: Request, paper_id: int):
     )
     folder = _paper_dir(paper_id)
     files = sorted(f.relative_to(folder) for f in folder.rglob("*") if f.is_file()) if folder.is_dir() else []
-    return _page(request, "paper.html", p=stored, chunks=chunks, hits=hits,
+    return _page(request, "paper.html", p=stored, queue=queue[0], chunks=chunks, hits=hits,
                  files=[(str(f), (folder / f).stat().st_size) for f in files],
                  images=[str(f) for f in files if f.parts[0] == "images"],
                  text_file=next((str(f) for f in files if f.name.endswith(".pdf.md")), None))

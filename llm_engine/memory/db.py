@@ -129,6 +129,39 @@ async def find_paper(source: str, source_id: str) -> Optional[int]:
         )
 
 
+async def find_paper_by_doi(doi: str) -> Optional[int]:
+    """The id of a stored paper with this DOI (any source), or None."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT id FROM papers WHERE lower(doi) = lower($1) ORDER BY id LIMIT 1", doi)
+
+
+async def queue_pdf(paper_id: int, pdf_source: str) -> None:
+    """Puts the PDF of a paper (a URL or a local path) into the queue of
+    `phdcode ingest`, and clears an earlier failure."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE papers SET pdf_source = $2, pdf_error = NULL WHERE id = $1",
+                           paper_id, pdf_source)
+
+
+async def queued_pdfs() -> list[dict[str, Any]]:
+    """The abstract-only papers in the PDF queue that did not fail, oldest first."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, source_id, pdf_source FROM papers "
+            "WHERE pdf_source IS NOT NULL AND parse_mode IS NULL AND pdf_error IS NULL ORDER BY id"
+        )
+    return [dict(row) for row in rows]
+
+
+async def set_pdf_error(paper_id: int, error: str) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE papers SET pdf_error = $2 WHERE id = $1", paper_id, error)
+
+
 async def update_paper_metadata(paper_id: int, title: Optional[str], authors: Sequence[str]) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:

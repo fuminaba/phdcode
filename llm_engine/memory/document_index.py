@@ -2,9 +2,12 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
+
+import requests
 
 from dotenv import load_dotenv
 
@@ -36,9 +39,11 @@ except ImportError:
 from .db import (
     add_paper_keywords,
     pending_papers,
+    queued_pdfs,
     save_paper,
     set_facet,
     set_full_text,
+    set_pdf_error,
     update_paper_metadata,
 )
 
@@ -76,6 +81,8 @@ PARSE_MODE = "text"
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 # marker's paginate_output line before each page: "{0}" + 48 dashes.
 _PAGE_SEPARATOR_RE = re.compile(r"^\{(\d+)\}-{3,}$")
+_FIGURE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_BLOCK = ("|", "![")  # the first characters of a table or a figure unit
 
 
 class Chunk(NamedTuple):
@@ -97,19 +104,46 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     chunk (by approximate character length, not raw slicing) that the next
     chunk starts with recent context instead of cold. Returns [] for empty/
     whitespace-only text.
+
+    Two kinds of block are one unit each, with their lines, so that a search
+    result can show them: a Markdown table (consecutive lines that start
+    with "|"), and figure links ("![](name)") with the caption line after
+    them. A large block is a chunk of its own, and the overlap never repeats
+    a block.
     """
     units: list[tuple[int, str]] = []
     page = 1
+    block: list[str] = []  # a table, or figure links that wait for their caption
+
+    def end_block() -> None:
+        if block:
+            units.append((page, "\n".join(block)))
+            block.clear()
+
     for line in text.splitlines():
         stripped = line.strip()
+        is_row = stripped.startswith("|")
+        if block and is_row != block[0].startswith("|"):
+            end_block()  # a table ends, or figures with no caption end
+        if is_row or _FIGURE_RE.fullmatch(stripped):
+            block.append(stripped)
+            continue
+        if not stripped:
+            continue
         separator = _PAGE_SEPARATOR_RE.match(stripped)
         if separator:
+            end_block()
             page = int(separator.group(1)) + 1
+            continue
+        if block:  # the caption of the figures
+            block.append(stripped)
+            end_block()
             continue
         for sentence in _SENTENCE_SPLIT_RE.split(stripped):
             sentence = sentence.strip()
             if sentence:
                 units.append((page, sentence))
+    end_block()
 
     chunks: list[Chunk] = []
     n = len(units)
@@ -125,7 +159,9 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
             j += 1
 
         current_units = units[i:j]
-        content = " ".join(sentence for _, sentence in current_units)
+        content = current_units[0][1]
+        for (_, previous), (_, sentence) in zip(current_units, current_units[1:]):
+            content += ("\n" if sentence.startswith(_BLOCK) or previous.startswith(_BLOCK) else " ") + sentence
         chunks.append(Chunk(content, current_units[0][0], current_units[-1][0]))
 
         if j >= n:
@@ -140,6 +176,8 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
         back_chars = 0
         step_back = 0
         for idx in range(j - 1, i, -1):
+            if units[idx][1].startswith(_BLOCK):
+                break
             back_chars += len(units[idx][1]) + 1
             step_back += 1
             if back_chars >= overlap:
@@ -170,10 +208,15 @@ async def ingest_full_text(
         content: bytes,
         extract_metadata: bool = False,
         model_name: Optional[str] = None,
+        run_models: bool = True,
 ) -> list[str]:
     """Makes a full-text paper of a stored paper: parses the PDF into
     PAPERS_DIR/<paper_id>/, replaces its chunks (with pages and CPU
     embeddings), then makes the methods and results facets.
+
+    run_models=False leaves the model steps pending for `phdcode summarize`
+    (phdcode ingest: the parses of a queue use the GPU while llama-server
+    is stopped, and the summaries start it after them).
 
     extract_metadata=True is for a local PDF, which has no source record:
     the model also extracts the title, the authors, the keywords and the
@@ -186,7 +229,11 @@ async def ingest_full_text(
     one line for each failed step, for the caller to show; [] = all done.
     """
     pdf_path = PAPERS_DIR / str(paper_id) / Path(filename).name
-    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    # One paper, one PDF: a new ingest replaces all files of the paper, so
+    # that no figure or table of an earlier PDF stays (the caller already
+    # holds the content).
+    shutil.rmtree(pdf_path.parent, ignore_errors=True)
+    pdf_path.parent.mkdir(parents=True)
     pdf_path.write_bytes(content)
     log.info("paper %s: parsing %s", paper_id, pdf_path)
     text_path = await _parse_pdf(pdf_path)
@@ -196,7 +243,46 @@ async def ingest_full_text(
     embeddings = await asyncio.to_thread(embed, [c.content for c in chunks]) if chunks else []
     await set_full_text(paper_id, PARSE_MODE, str(pdf_path), str(text_path), chunks, embeddings)
     log.info("paper %s: indexed %d chunks", paper_id, len(chunks))
+    if not run_models:
+        return []
     return await run_model_steps(paper_id, text, extract_metadata, model_name)
+
+
+def download_pdf(url: str) -> bytes:
+    response = requests.get(url, timeout=60, headers={"User-Agent": "phdcode"})
+    response.raise_for_status()
+    if not response.content.startswith(b"%PDF"):
+        raise ValueError(
+            f"{url} did not return a PDF. Download the PDF and call ingest_pdf with its local path."
+        )
+    return response.content
+
+
+async def ingest_queue(limit: Optional[int] = None) -> list[str]:
+    """`phdcode ingest`: makes a full-text paper of each paper in the PDF
+    queue (db.queued_pdfs), one at a time, with no model steps. A failure
+    (a download that is not a PDF, a parse that fails) is stored in
+    pdf_error, and the queue goes on. limit: at most this many papers.
+    Returns one line for each paper."""
+    report = []
+    for paper in (await queued_pdfs())[:limit]:
+        source = paper["pdf_source"]
+        try:
+            if source.startswith(("http://", "https://")):
+                content = await asyncio.to_thread(download_pdf, source)
+                filename = f"{(paper['source_id'] or paper['id'])}.pdf".replace("/", "_")
+            else:
+                content, filename = Path(source).read_bytes(), Path(source).name
+                if not content.startswith(b"%PDF"):
+                    raise ValueError(f"{source} is not a PDF.")
+            await ingest_full_text(paper["id"], filename, content, run_models=False)
+            report.append(f"paper {paper['id']}: full text")
+        except Exception as e:  # the next paper still runs; the reason is in pdf_error
+            log.exception("paper %s: the PDF failed", paper["id"])
+            error = f"{type(e).__name__}: {e}"[:500]
+            await set_pdf_error(paper["id"], error)
+            report.append(f"paper {paper['id']}: failed: {error}")
+    return report
 
 
 async def run_model_steps(
@@ -309,4 +395,15 @@ if __name__ == "__main__":
     pages = [(c.page_start, c.page_end) for c in chunk_text(text, chunk_size=5, overlap=0)]
     assert pages == [(1, 1), (1, 1), (1, 1), (2, 2)], pages
     assert chunk_text("  \n\n") == []
+    table = "Before. Text.\n| A | B |\n|---|---|\n| 1 | 2 |\nAfter."
+    assert [c.content for c in chunk_text(table, chunk_size=1000)] == [
+        "Before. Text.\n| A | B |\n|---|---|\n| 1 | 2 |\nAfter."]
+    # A table larger than a chunk is a chunk of its own; no overlap repeats it.
+    parts = [c.content for c in chunk_text(table, chunk_size=20, overlap=50)]
+    assert parts.count("| A | B |\n|---|---|\n| 1 | 2 |") == 1, parts
+    figure = "Text. More.\n\n![](_page_1_Figure_1.jpeg)\n\n*Fig. 1. A caption. Two.*\n\nAfter."
+    assert [c.content for c in chunk_text(figure, chunk_size=1000)] == [
+        "Text. More.\n![](_page_1_Figure_1.jpeg)\n*Fig. 1. A caption. Two.*\nAfter."]
+    parts = [c.content for c in chunk_text(figure, chunk_size=10, overlap=50)]
+    assert "![](_page_1_Figure_1.jpeg)\n*Fig. 1. A caption. Two.*" in parts, parts
     print("chunk_text: ok")
