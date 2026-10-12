@@ -26,7 +26,7 @@ An answer that cites it says so.
 its embedding and its keyword index. The source of a quoted passage.
 
 **Parse mode** — how the PDF of a full-text paper was turned into text:
-*text* (the text layer only, on the CPU) or *balanced* (a vision model reads
+*text* (the text layer only, no OCR) or *balanced* (a vision model reads
 the pages where the text layer is bad).
 
 **Upgrade** — a second parse of a full-text paper from *text* to *balanced*

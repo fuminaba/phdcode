@@ -17,12 +17,12 @@ it if the reranker does not load.
 """
 import logging
 import os
-from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
 
 from .generation import generate
+from .gpu import gpu_free
 from .prompts import triage_prompt
 from .schemas import TRIAGE_SCHEMA
 
@@ -34,7 +34,6 @@ TRIAGE_RERANKER = os.getenv("TRIAGE_RERANKER", "Qwen/Qwen3-Reranker-0.6B")
 TRIAGE_MODEL = os.getenv("TRIAGE_MODEL") or None
 # Measured for Qwen3-Reranker-0.6B in fp16 at batch 8: 3.0 GB peak.
 TRIAGE_VRAM_MIB = 4096
-GPU_CLEARED = Path("/tmp/gpu.cleared")
 _BATCH = {"cuda": 8, "cpu": 1}  # On the CPU, padding in a batch only adds work.
 
 # The input format of the Qwen3-Reranker model card.
@@ -43,16 +42,6 @@ _PREFIX = ("<|im_start|>system\nJudge whether the Document meets the requirement
            "the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n"
            "<|im_start|>user\n")
 _SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-
-
-def _gpu_free() -> bool:
-    """True if a short job may use the GPU now. ponytail: a check of the
-    free VRAM, not the lock of ADR-0017; take /tmp/gpu.lock (step 5)."""
-    import torch
-    if GPU_CLEARED.exists() or not torch.cuda.is_available():
-        return False
-    free, _ = torch.cuda.mem_get_info()
-    return free >= TRIAGE_VRAM_MIB * 2**20
 
 
 class Reranker:
@@ -64,7 +53,7 @@ class Reranker:
         self.model = AutoModelForCausalLM.from_pretrained(name, dtype=torch.float32).eval()
         self.yes_no = [self.tokenizer.convert_tokens_to_ids(t) for t in ("no", "yes")]
         self.device = "cpu"
-        if _gpu_free():
+        if gpu_free(TRIAGE_VRAM_MIB):
             try:
                 self.model.to("cuda", torch.float16)
                 self.device = "cuda"

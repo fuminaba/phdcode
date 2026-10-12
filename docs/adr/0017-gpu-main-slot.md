@@ -43,8 +43,8 @@ durable.
    - `SUMMARY_MODEL`: the route for summaries. The default is `AGENT_BACKEND`.
    - the VRAM cap of Surya, and the idle time before a swap or a stop (default
      30 minutes).
-4. **`ingest_pdf`** never starts a GPU workload. If Surya runs, it parses in
-   `balanced` mode at once. If not, it parses in text mode on the CPU and sets
+4. **`ingest_pdf`** never starts a GPU tenant. If Surya runs, it parses in
+   `balanced` mode at once. If not, it parses in text mode (item 8) and sets
    `parse_mode = text`. It stores the chunks first, then makes the summaries
    through `SUMMARY_MODEL`. If a summary step fails for any reason (the server
    is stopped, no model is set, the reply is not valid), the summaries are
@@ -69,13 +69,17 @@ durable.
    change.
 7. **No Celery, no Redis, no queue table.** A crash during the drain leaves the
    papers in `parse_mode = text`, and the next drain does them again.
-8. **Triage is a short GPU job, not a tenant.** The sweep moves the reranker
-   to the GPU only if `/tmp/gpu.cleared` does not exist and 4 GB of VRAM is
-   free; else it runs on the CPU. If CUDA runs out of memory, the rest runs on
-   the CPU. It holds about 3 GB for seconds: a sweep of 37 hits took 20 s in
-   total on the GPU, against about 2 minutes of triage on the CPU. With the
-   lock (step 5), it takes the lock without a wait, and uses the CPU if the
-   lock is held.
+8. **Triage and the text-mode parse are short GPU jobs, not tenants.** Each
+   uses the GPU only if `/tmp/gpu.cleared` does not exist and its VRAM is
+   free (the reranker 4 GB, the parse 6 GB); else it runs on the CPU. If CUDA
+   runs out of memory, the job continues or runs again on the CPU. The check
+   reads the free VRAM outside the process (`gpu.free_vram_mib()`), so a job
+   on the CPU holds no CUDA context. Measured: a sweep of 37 hits took 20 s
+   on the GPU, against about 2 minutes of triage on the CPU; a 5-page parse
+   took 22 s on the GPU and 197 s on the CPU, with the same text. With the
+   lock (step 5), a short job takes the lock without a wait, and uses the CPU
+   if the lock is held. While a local LLM holds the GPU (Bonsai 2 27B: 14.4
+   GB), both jobs use the CPU.
 
 ## Consequences
 

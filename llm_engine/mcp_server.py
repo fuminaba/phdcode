@@ -180,8 +180,8 @@ async def save_paper(paper: str) -> dict[str, Any]:
 @tool
 async def ingest_pdf(paper: str) -> dict[str, Any]:
     """Makes a full-text paper: parses the PDF into chunks with pages, and
-    makes the methods and results summaries. Takes minutes (the parse runs
-    on the CPU).
+    makes the methods and results summaries. Takes from about 1 minute to
+    several minutes (the parse runs on the CPU while the GPU is busy).
 
     paper is a reference ('arxiv:2401.12345'; the paper is saved first, and
     its PDF is downloaded) or the absolute path of a local PDF (the model

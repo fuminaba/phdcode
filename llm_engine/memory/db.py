@@ -221,6 +221,21 @@ _RRF_K = 60
 _CANDIDATE_POOL = 20
 
 
+async def pending_papers() -> list[dict[str, Any]]:
+    """The full-text papers with a pending model step: no methods or results
+    summary, or a local PDF (no source) with no title. needs_metadata marks
+    the second kind."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, text_path, (source IS NULL AND title IS NULL) AS needs_metadata FROM papers "
+            "WHERE parse_mode IS NOT NULL "
+            "AND (methods_summary IS NULL OR results_summary IS NULL OR (source IS NULL AND title IS NULL)) "
+            "ORDER BY id"
+        )
+    return [dict(row) for row in rows]
+
+
 def _rrf_cte(table: str, vector_col: str, text_col: str, where: str = "TRUE") -> str:
     """The shared vector_ranked/text_ranked/fused CTE prefix behind
     search_papers and search_chunks. A caller prepends this to its own final

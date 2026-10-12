@@ -34,7 +34,10 @@ def methods_summary_prompt(document_text: str) -> str:
         "Summarize the methodology used in the following document — study "
         "design, techniques, tools, procedures, data sources, sample sizes, "
         "etc. If the document doesn't describe a methodology, say so "
-        "explicitly rather than inventing one.\n\n"
+        "explicitly rather than inventing one. "
+        "The document can come as digests of its sections: write about the "
+        "paper itself, and do not mention the excerpts, the digests or the "
+        "reference list.\n\n"
         f"Document:\n{document_text}"
     )
 
@@ -44,7 +47,10 @@ def results_summary_prompt(document_text: str) -> str:
         "Summarize the results/findings reported in the following document "
         "— key outcomes, measurements, statistical findings, and "
         "conclusions drawn from the data. If the document doesn't report "
-        "results, say so explicitly rather than inventing them.\n\n"
+        "results, say so explicitly rather than inventing them. "
+        "The document can come as digests of its sections: write about the "
+        "paper itself, and do not mention the excerpts, the digests or the "
+        "reference list.\n\n"
         f"Document:\n{document_text}"
     )
 
