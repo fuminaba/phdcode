@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS papers (
     UNIQUE (source, source_id)
 );
 
+-- The PDF queue (phdcode import, phdcode ingest): pdf_source is the URL or
+-- the local path of the PDF of an abstract-only paper; `phdcode ingest`
+-- parses each paper that has one. pdf_error is why the last attempt failed;
+-- the paper then leaves the queue until its source is set again.
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS pdf_source TEXT;
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS pdf_error TEXT;
+
 CREATE INDEX IF NOT EXISTS papers_concept_embedding_idx
     ON papers USING hnsw (concept_embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS papers_methods_embedding_idx

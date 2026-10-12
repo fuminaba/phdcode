@@ -39,6 +39,14 @@ its own embedding. An abstract-only paper has only the concept facet.
 **Citation** — the paper, the page and an exact quote. *Not* a chunk ID, which
 changes at an upgrade.
 
+**PDF queue** — the abstract-only papers whose PDF waits for a parse: each has
+the URL or the local path of its PDF. `phdcode ingest` parses them; a PDF that
+fails leaves the queue with its reason. *Not* the drain, which makes summaries.
+
+**Reference list** — a BibTeX export of the papers that the user cites (Zotero).
+`phdcode import` makes an abstract-only paper of each entry with an ID, and
+puts its PDF into the PDF queue.
+
 ## Surveillance
 
 **Saved search** — a standing query to arXiv, PubMed or OpenAlex, with an

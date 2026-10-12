@@ -16,6 +16,8 @@
 {% if states %}
   {% for state, n in states.items() %}<div>{{ n }} &nbsp;<span class="tag">{{ state }}</span></div>{% endfor %}
 {% else %}<span class="muted">No papers yet.</span>{% endif %}
+{% if states.get("PDF queued") %}<p class="warn">{{ states["PDF queued"] }} PDFs wait in the queue: run <code>phdcode ingest</code>, then <code>phdcode summarize</code>.</p>{% endif %}
+{% if states.get("PDF failed") %}<p class="bad">{{ states["PDF failed"] }} PDFs failed: the reason is on the page of each paper (filter the <a href="/papers">papers</a> by "PDF failed").</p>{% endif %}
 {% if pending %}
   <p class="warn">Pending model steps (run <code>phdcode summarize</code>):
   {% for p in pending %}<a href="/papers/{{ p.id }}">paper {{ p.id }}</a>{{ " (metadata)" if p.needs_metadata }}{{ ", " if not loop.last }}{% endfor %}</p>

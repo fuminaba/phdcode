@@ -10,6 +10,8 @@ to stderr, and the PDF parse runs in a subprocess (documents.py).
 import asyncio
 import functools
 import logging
+import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
@@ -20,12 +22,14 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from . import sources
+from .documents import PAPERS_DIR
 from .embeddings import embed
 from .memory import (
     FACETS,
     add_saved_search as db_add_saved_search,
     cancel_saved_search as db_cancel_saved_search,
     close_pool,
+    download_pdf,
     find_paper,
     get_paper as db_get_paper,
     ingest_full_text,
@@ -39,6 +43,10 @@ from .memory import (
 
 log = logging.getLogger(__name__)
 
+# The phdcode interface (dashboard.py), for the links to figures.
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://100.110.224.47:8620")
+_FIGURE = re.compile(r"!\[[^\]]*\]\(([^)/]+)\)")
+
 INSTRUCTIONS = """\
 phdcode keeps the user's literature: papers from arXiv, PubMed and OpenAlex,
 stored as abstract-only papers (title and abstract) or as full-text papers
@@ -48,6 +56,10 @@ stored as abstract-only papers (title and abstract) or as full-text papers
   papers it finds. To find new papers: search_sources, then get_paper.
 - Cite each claim with the paper title, the page and an exact quote from a
   chunk. If a claim rests only on an abstract (parse_mode null), say so.
+- A passage can hold a table (Markdown rows) or figures (each with its file
+  and its link). When a table or a figure answers the question, include it:
+  the table as Markdown, a figure by its caption and its link. A client that
+  reads images can open the file to describe the figure.
 - save_paper keeps an abstract-only paper. ingest_pdf makes a full-text paper.
 - A saved search is a standing query that a daily sweep runs; triage judges
   each new hit against its interest statement.
@@ -112,16 +124,6 @@ async def _lookup(ref: str) -> dict[str, Any]:
     if record is None:
         raise ValueError(f"No paper found for {ref!r}.")
     return record
-
-
-def _download_pdf(url: str) -> bytes:
-    response = requests.get(url, timeout=60, headers={"User-Agent": "phdcode"})
-    response.raise_for_status()
-    if not response.content.startswith(b"%PDF"):
-        raise ValueError(
-            f"{url} did not return a PDF. Download the PDF and call ingest_pdf with its local path."
-        )
-    return response.content
 
 
 @tool(read_only=True)
@@ -213,7 +215,7 @@ async def ingest_pdf(paper: str) -> dict[str, Any]:
         record = await _lookup(paper)
         if not record["pdf_url"]:
             raise ValueError(f"{paper} has no PDF link. Download the PDF and give its local path.")
-        content = await asyncio.to_thread(_download_pdf, record["pdf_url"])
+        content = await asyncio.to_thread(download_pdf, record["pdf_url"])
         paper_id = await save_record(record)
         filename, local = f"{record['source_id'].replace('/', '_')}.pdf", False
 
@@ -265,7 +267,10 @@ async def search_chunks(
     """Hybrid search over the full text of full-text papers. paper_ids
     limits it to these papers (from search_papers); none = all papers.
     Returns each passage with its paper and pages: quote the content exactly
-    and cite the title and the page."""
+    and cite the title and the page. A table in a passage keeps its rows.
+    "figures" lists each figure that the passage shows ("![](name)"), with
+    its file on the server and its link in the phdcode interface; its
+    caption is usually the next line of the content."""
     rows = await db_search_chunks(query, await _embed_one(query), paper_ids, max_results)
     return [
         {
@@ -274,6 +279,13 @@ async def search_chunks(
             "pages": str(r["page_start"]) if r["page_start"] == r["page_end"]
             else f"{r['page_start']}-{r['page_end']}",
             "content": r["content"],
+            "figures": [
+                {
+                    "file": str(PAPERS_DIR / str(r["paper_id"]) / "images" / name),
+                    "url": f"{DASHBOARD_URL}/papers/{r['paper_id']}/files/images/{name}",
+                }
+                for name in _FIGURE.findall(r["content"])
+            ],
             "score": round(r["score"], 4),
         }
         for r in rows

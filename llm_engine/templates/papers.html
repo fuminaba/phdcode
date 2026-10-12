@@ -12,7 +12,7 @@
   <td>{{ p.authors[0] if p.authors }}{{ " et al." if p.authors|length > 1 }}</td>
   <td>{{ (p.published_date or "")[:10] }}</td>
   <td>{% set url = source_url(p.source, p.source_id) %}{% if url %}<a href="{{ url }}">{{ p.source }}:{{ p.source_id }}</a>{% else %}local PDF{% endif %}</td>
-  <td><span class="tag {{ 'ok' if p.state == 'full text' else 'warn' if 'pending' in p.state else '' }}">{{ p.state }}</span></td>
+  <td><span class="tag {{ 'ok' if p.state == 'full text' else 'bad' if p.state == 'PDF failed' else 'warn' if 'pending' in p.state or 'queued' in p.state else '' }}">{{ p.state }}</span></td>
   <td>{{ p.chunks }}</td>
   <td>{{ p.created_at|when }}</td>
 </tr>
