@@ -9,7 +9,8 @@ from typing import Any, NamedTuple, Optional
 from dotenv import load_dotenv
 
 try:
-    from ..documents import PAPERS_DIR, text_path_for
+    from ..documents import PAPERS_DIR, PARSE_VRAM_MIB, text_path_for
+    from ..gpu import gpu_free
     from ..embeddings import embed
     from ..generation import generate
     from ..prompts import (
@@ -20,7 +21,8 @@ try:
     )
     from ..schemas import PAPER_METADATA_SCHEMA
 except ImportError:
-    from documents import PAPERS_DIR, text_path_for
+    from documents import PAPERS_DIR, PARSE_VRAM_MIB, text_path_for
+    from gpu import gpu_free
     from embeddings import embed
     from generation import generate
     from prompts import (
@@ -31,7 +33,14 @@ except ImportError:
     )
     from schemas import PAPER_METADATA_SCHEMA
 
-from .db import add_paper_keywords, save_paper, set_facet, set_full_text, update_paper_metadata
+from .db import (
+    add_paper_keywords,
+    pending_papers,
+    save_paper,
+    set_facet,
+    set_full_text,
+    update_paper_metadata,
+)
 
 load_dotenv()
 
@@ -59,7 +68,8 @@ CHUNK_OVERLAP = int(os.getenv("DOCUMENT_CHUNK_OVERLAP", "200"))
 MAP_CHUNK_SIZE = int(os.getenv("DOCUMENT_MAP_CHUNK_SIZE", "8000"))
 MAP_CHUNK_OVERLAP = 300
 
-# documents.py parses with no OCR, on the CPU (ADR-0017). The drain upgrades
+# documents.py parses with no OCR, on the GPU if it is free, else on the CPU
+# (ADR-0017). The drain upgrades
 # a 'text' paper to 'balanced'.
 PARSE_MODE = "text"
 
@@ -186,7 +196,14 @@ async def ingest_full_text(
     embeddings = await asyncio.to_thread(embed, [c.content for c in chunks]) if chunks else []
     await set_full_text(paper_id, PARSE_MODE, str(pdf_path), str(text_path), chunks, embeddings)
     log.info("paper %s: indexed %d chunks", paper_id, len(chunks))
+    return await run_model_steps(paper_id, text, extract_metadata, model_name)
 
+
+async def run_model_steps(
+        paper_id: int, text: str, extract_metadata: bool, model_name: Optional[str] = None,
+) -> list[str]:
+    """The model steps of a full-text paper: the metadata (a local PDF
+    only), then the summaries. Returns one line for each failed step."""
     steps = [("metadata", extract_paper_metadata)] if extract_metadata else []
     steps.append(("summaries", summarize_full_text))
     failures = []
@@ -199,19 +216,36 @@ async def ingest_full_text(
     return failures
 
 
+async def run_pending_steps(model_name: Optional[str] = None) -> list[str]:
+    """Runs the model steps of each full-text paper that has a pending
+    step. Returns one line for each paper."""
+    report = []
+    for paper in await pending_papers():
+        text = Path(paper["text_path"]).read_text()
+        failures = await run_model_steps(paper["id"], text, paper["needs_metadata"], model_name)
+        report.append(f"paper {paper['id']}: " + ("; ".join(failures) if failures else "done"))
+    return report
+
+
 async def _parse_pdf(pdf_path: Path) -> Path:
-    """Runs documents.py in a subprocess (see its docstring). Its output goes
+    """Runs documents.py in a subprocess (see its docstring), on the GPU if
+    it is free (ADR-0017, item 8), else on the CPU. A parse that fails on the
+    GPU (for example, out of memory) runs again on the CPU. Its output goes
     to parse.log next to the PDF. Returns the path of the markdown file."""
     log_path = pdf_path.parent / "parse.log"
+    devices = ["cuda", "cpu"] if await asyncio.to_thread(gpu_free, PARSE_VRAM_MIB) else ["cpu"]
     with log_path.open("wb") as log_file:
-        process = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "llm_engine.documents", str(pdf_path),
-            stdin=asyncio.subprocess.DEVNULL, stdout=log_file, stderr=log_file,
-        )
-        code = await process.wait()
-    if code != 0:
-        raise RuntimeError(f"The PDF parse failed (exit code {code}); see {log_path}.")
-    return text_path_for(pdf_path)
+        for device in devices:
+            log.info("parse of %s on %s", pdf_path.name, device)
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "llm_engine.documents", str(pdf_path), device,
+                stdin=asyncio.subprocess.DEVNULL, stdout=log_file, stderr=log_file,
+            )
+            code = await process.wait()
+            if code == 0:
+                return text_path_for(pdf_path)
+            log.warning("the parse on %s failed (exit code %s); see %s", device, code, log_path)
+    raise RuntimeError(f"The PDF parse failed (exit code {code}); see {log_path}.")
 
 
 async def extract_paper_metadata(paper_id: int, text: str, model_name: Optional[str] = None) -> None:

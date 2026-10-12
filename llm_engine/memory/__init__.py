@@ -10,6 +10,7 @@ from .db import (
     init_schema,
     list_saved_searches,
     mark_swept,
+    pending_papers,
     record_triage,
     save_paper,
     search_chunks,
@@ -19,7 +20,13 @@ from .db import (
     triaged_source_ids,
     update_paper_metadata,
 )
-from .document_index import extract_paper_metadata, ingest_full_text, save_record, summarize_full_text
+from .document_index import (
+    extract_paper_metadata,
+    ingest_full_text,
+    run_pending_steps,
+    save_record,
+    summarize_full_text,
+)
 
 __all__ = [
     "FACETS",
@@ -35,7 +42,9 @@ __all__ = [
     "init_schema",
     "list_saved_searches",
     "mark_swept",
+    "pending_papers",
     "record_triage",
+    "run_pending_steps",
     "save_paper",
     "save_record",
     "search_chunks",

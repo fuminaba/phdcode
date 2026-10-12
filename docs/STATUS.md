@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-11 (after `a1ceb1f`; step 4 is not committed)
+**Updated:** 2026-10-11 (after `1f9770c`; `phdcode summarize` and the GPU parse are not committed)
 
 <!--
 CONVENTION -- read before editing.
@@ -23,12 +23,13 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 ## Blocked on a human
 
-- **Fumi commits step 4** (OpenAlex, triage, the sweep). The message is in the vault: `Projects/phdcode/agents/commits/5-code-step4-sweep.md`.
+- **Fumi commits `phdcode summarize` and the GPU parse.** The message is in the vault: `Projects/phdcode/agents/commits/6-code-summarize.md`.
+- **`SUMMARY_MODEL` in `.env`.** Fumi chose Bonsai 2 27B (`bonsai2-27b`, llama-server on port 8080, 14.4 GB of VRAM). llama-server does not run as a service yet (step 5), so an ingest while it is stopped leaves the summaries pending; `phdcode summarize` makes them later.
+- **The real saved searches** in the live database (`add_saved_search` in a harness session). The MCP server is registered in Claude Code and connected, so the new tables exist in `alira_memory`.
 - **The labelled set** (about 100 papers that Fumi labels) selects the triage threshold, and compares Qwen3-Reranker-0.6B with 4B. Until then, the threshold of each saved search is a guess (default 0.5).
-- **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. Install it after the triage test, and set `DIGEST_DIR` in `.env` first (the default is `logs/digests` in the repo).
+- **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. Set `DIGEST_DIR` in `.env` first (the default is `logs/digests` in the repo).
 - **The old rows in Postgres.** The old tables hold 2 documents, 51 chunks, 24 conversations and 7 hooks. Fumi decides: export them, or drop the old tables. The new tables do not touch them.
-- **`.env` has no `AGENT_BACKEND` and no `SUMMARY_MODEL`.** Until one is set, an ingest stores the chunks and reports the summaries as pending, and each hit of a sweep waits for triage.
-- **The server needs a reboot** for the NVIDIA driver (the library is 595.99, the kernel module 595.91). Only NVML fails (`nvidia-smi`); CUDA works (verified 2026-10-11). Read the free VRAM with `torch.cuda.mem_get_info()` until the reboot.
+- **The server needs a reboot** for the NVIDIA driver (the library is 595.99, the kernel module 595.91). Only NVML fails (`nvidia-smi`); CUDA works (verified 2026-10-11). Until the reboot, `gpu.free_vram_mib()` reads the free VRAM through a PyTorch child process (3 s instead of an instant `nvidia-smi`).
 - **The VRAM test of the capped Surya vLLM server.** ADR-0017 stays Proposed until it runs. Ask Fumi before you start it: training uses the GPU. The procedure is in the vault: `Projects/phdcode/agents/HANDOFF.md`, "Test the VRAM".
 
 ## In progress
@@ -39,6 +40,10 @@ Step 4 (OpenAlex, `decide()`, `phdcode sweep`, the timer units) is written. Test
 - triage of the same 37 hits: Qwen 3.5 9B (Ollama) median 19.6 s for each hit, 4 invalid replies (before the JSON Schema fix); Bonsai 2 27B (llama-server, 14.4 GB of VRAM) median 3.4 s, 0 invalid; **Qwen3-Reranker-0.6B 16 ms on the GPU (batch 8), 3.1 s on the CPU, the same order as Bonsai.** Results in `logs/triage-test/` (not in git);
 - **two full sweeps with the reranker on the GPU: 19.6 s (37 hits triaged, 4 papers saved), then 3.6 s (0 new hits);**
 - the MCP test of step 3 again: all nine tools pass.
+
+`phdcode summarize` (written, not committed): tested with Bonsai 2 27B on `phdcode_test`. It made the pending summaries of paper 6 in 56 s. An `ingest_pdf` of a local PDF through MCP took 286 s; Bonsai extracted the title, the authors and the abstract, and the summaries describe the paper.
+
+The text parse uses the GPU when it is free (not cleared, 6 GB free): a 5-page parse took 22 s on the GPU against 197 s on the CPU, and the local-PDF ingest through MCP took 45 s. While Bonsai holds the GPU, the parse uses the CPU.
 
 The marker parse of step 3 took 3 min 18 s for 5 pages on 8 CPU threads, with a peak of 9.2 GB RAM. The test scripts are not in the repo (no `tests/` folder yet).
 

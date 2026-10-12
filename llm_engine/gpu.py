@@ -145,3 +145,40 @@ def gpu_lock(
 
 if __name__ == "__main__":
     print(LOCK_PATH)
+
+
+# --- The admission check of a short GPU job (ADR-0017, item 8) -------------
+# The reranker and the marker parse use the GPU only if it is not cleared and
+# has the VRAM free; else they run on the CPU. The check runs outside the
+# calling process, so that a process that then uses the CPU holds no CUDA
+# context (about 300 MB of VRAM) for its life.
+
+GPU_CLEARED = "/tmp/gpu.cleared"
+
+_TORCH_FREE_MIB = (
+    "import torch; print(torch.cuda.mem_get_info()[0] >> 20 if torch.cuda.is_available() else 0)"
+)
+
+
+def free_vram_mib() -> int:
+    """The free VRAM in MiB; 0 if there is no usable GPU. nvidia-smi first;
+    if NVML fails (a driver update before the reboot), a short PyTorch child
+    process, which takes about 3 s."""
+    import subprocess
+    import sys
+    for command in (
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            [sys.executable, "-c", _TORCH_FREE_MIB],
+    ):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=True)
+            return int(result.stdout.split()[0])
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            continue
+    return 0
+
+
+def gpu_free(need_mib: int) -> bool:
+    """True if a short job that needs need_mib of VRAM may use the GPU now.
+    ponytail: a check of the free VRAM, not the lock; step 5 adds the lock."""
+    return not os.path.exists(GPU_CLEARED) and free_vram_mib() >= need_mib

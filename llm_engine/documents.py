@@ -1,9 +1,11 @@
-"""The PDF parse: marker, in text mode, on the CPU (ADR-0017).
+"""The PDF parse: marker, in text mode (ADR-0017).
 
-Text mode reads the text layer only (no OCR), and the models run on the CPU,
-so a parse never needs the GPU. The ingest runs it in a subprocess:
+Text mode reads the text layer only (no OCR). marker's models (layout,
+tables) run on the GPU if it is free, else on the CPU: a 5-page paper took
+22 s on the GPU and 197 s on the CPU, with the same text. The ingest runs it
+in a subprocess, and selects the device:
 
-    python -m llm_engine.documents <pdf_path>
+    python -m llm_engine.documents <pdf_path> [cuda|cpu]
 
 The subprocess keeps marker's output away from the MCP server's stdout (the
 protocol channel), and frees marker's RAM when the parse ends.
@@ -24,6 +26,9 @@ PAPERS_DIR = Path(__file__).resolve().parents[1] / os.getenv("LOG_DIR", "logs") 
 
 # The parse runs beside training (data loaders), so it uses half the cores.
 PARSE_THREADS = max(1, (os.cpu_count() or 2) // 2)
+# Measured on a 5-page paper: 4,960 MiB reserved at the peak, plus the CUDA
+# context, plus a margin.
+PARSE_VRAM_MIB = 6144
 
 # Matches a run of consecutive markdown table rows (header, separator, data).
 _TABLE_PATTERN = re.compile(r"((?:^\|.*\|\s*\n)+)", re.MULTILINE)
@@ -111,9 +116,11 @@ def parse_pdf(pdf_path: Path) -> Path:
 
 
 if __name__ == "__main__":
-    # Before torch loads: no CUDA context (no VRAM at all), and half the cores.
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    os.environ["TORCH_DEVICE"] = "cpu"
+    # Before torch loads. On the CPU: no CUDA context (no VRAM at all).
+    device = sys.argv[2] if len(sys.argv) > 2 else "cpu"
+    if device == "cpu":
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["TORCH_DEVICE"] = device
     for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ[var] = str(PARSE_THREADS)
     parse_pdf(Path(sys.argv[1]))
