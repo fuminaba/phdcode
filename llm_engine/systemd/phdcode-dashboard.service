@@ -1,0 +1,21 @@
+# The phdcode interface (llm_engine/dashboard.py): a read-only web page on
+# the Tailscale address only, so it needs no login.
+#
+#   systemctl --user link ~/Desktop/dev/phdcode/llm_engine/systemd/phdcode-dashboard.service
+#   systemctl --user enable --now phdcode-dashboard.service
+#
+# Open http://100.110.224.47:8620 from a device on the tailnet. At boot, the
+# Tailscale address can come after this unit: the bind then fails, and the
+# unit tries again after 30 s.
+[Unit]
+Description=phdcode interface (read-only web page)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/Desktop/dev/phdcode
+ExecStart=%h/miniconda3/envs/alira/bin/uvicorn llm_engine.dashboard:app --host 100.110.224.47 --port 8620
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

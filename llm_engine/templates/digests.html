@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Digests · phdcode{% endblock %}
+{% block main %}
+<h1>Digests</h1>
+{% if names %}
+<p>{% for n in names %}<a href="/digests?day={{ n }}"{% if n == name %} style="font-weight:600"{% endif %}>{{ n[:-3] }}</a>{{ " · " if not loop.last }}{% endfor %}</p>
+<div class="panel md">{{ html|safe }}</div>
+{% else %}
+<div class="panel muted">No digests yet. The daily sweep writes one Markdown file each day, when a saved search exists and the sweep timer is installed.</div>
+{% endif %}
+{% endblock %}

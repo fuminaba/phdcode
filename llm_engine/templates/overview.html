@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Overview</h1>
+
+<div class="cards">
+  <div class="card"><div class="n">{{ counts.papers }}</div><div class="l">papers</div></div>
+  <div class="card"><div class="n">{{ counts.full_text }}</div><div class="l">full-text papers</div></div>
+  <div class="card"><div class="n">{{ counts.chunks }}</div><div class="l">chunks (passages with pages)</div></div>
+  <div class="card"><div class="n">{{ counts.searches }}</div><div class="l">active saved searches</div></div>
+  <div class="card"><div class="n">{{ counts.triaged }}</div><div class="l">hits judged by triage</div></div>
+  <div class="card"><div class="n">{{ pending|length }}</div><div class="l">papers with pending model steps</div></div>
+</div>
+
+<h2>Papers by state</h2>
+<div class="panel">
+{% if states %}
+  {% for state, n in states.items() %}<div>{{ n }} &nbsp;<span class="tag">{{ state }}</span></div>{% endfor %}
+{% else %}<span class="muted">No papers yet.</span>{% endif %}
+{% if pending %}
+  <p class="warn">Pending model steps (run <code>phdcode summarize</code>):
+  {% for p in pending %}<a href="/papers/{{ p.id }}">paper {{ p.id }}</a>{{ " (metadata)" if p.needs_metadata }}{{ ", " if not loop.last }}{% endfor %}</p>
+{% endif %}
+</div>
+
+<h2>What runs</h2>
+{% set u = system.units %}
+<div class="scroll"><table>
+<tr><th>Part</th><th>State</th><th>Details</th></tr>
+<tr><td>llama-server (Bonsai 2 27B)</td>
+  <td>{% if u['phdcode-llm.service'].ActiveState == 'active' %}<span class="ok">running</span>{% else %}<span class="muted">stopped</span>{% endif %}</td>
+  <td>{% if u['phdcode-llm.service'].ActiveState == 'active' %}since {{ u['phdcode-llm.service'].ActiveEnterTimestamp }}; stops 30 minutes after the last request{% else %}starts at the first request to port 8080{% endif %}</td></tr>
+<tr><td>Socket on port 8080</td>
+  <td>{% if u['phdcode-llm-proxy.socket'].ActiveState == 'active' %}<span class="ok">listening</span>{% else %}<span class="bad">{{ u['phdcode-llm-proxy.socket'].ActiveState }}</span>{% endif %}</td>
+  <td>{% if system.cleared %}<span class="warn">GPU cleared for training: run <code>phdcode gpu restore</code> after it</span>{% else %}requests start llama-server{% endif %}</td></tr>
+<tr><td>GPU (RTX 5070 Ti)</td>
+  <td>{{ system.free_mib }} MiB free</td>
+  <td>{% if system.lock_holder %}lock held by: {{ system.lock_holder }}{% else %}lock free{% endif %}</td></tr>
+<tr><td>Daily sweep timer</td>
+  {% set t = u['phdcode-sweep.timer'] %}
+  <td>{% if t.LoadState == 'not-found' %}<span class="warn">not installed</span>{% elif t.ActiveState == 'active' %}<span class="ok">active</span>{% else %}{{ t.ActiveState }}{% endif %}</td>
+  <td>{% if t.LoadState != 'not-found' %}next: {{ t.NextElapseUSecRealtime or 'none' }}; last: {{ t.LastTriggerUSec or 'never' }}{% else %}see <code>llm_engine/systemd/phdcode-sweep.timer</code>{% endif %}</td></tr>
+<tr><td>Last sweep</td>
+  {% set s = u['phdcode-sweep.service'] %}
+  <td>{% if s.ExecMainExitTimestamp %}{{ s.Result }}{% else %}<span class="muted">never</span>{% endif %}</td>
+  <td>{{ s.ExecMainExitTimestamp }}{% if last_digest %}{{ "; " if s.ExecMainExitTimestamp }}latest digest: <a href="/digests?day={{ last_digest }}">{{ last_digest }}</a>{% endif %}</td></tr>
+</table></div>
+
+<h2>Configuration</h2>
+<div class="scroll"><table>
+{% for name, value in config %}<tr><td>{{ name }}</td><td><code>{{ value }}</code></td></tr>{% endfor %}
+</table></div>
+<p class="muted">From <code>.env</code> and the code, read when this interface started. Secrets are not shown.</p>
+{% endblock %}
