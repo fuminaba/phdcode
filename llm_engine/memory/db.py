@@ -100,6 +100,35 @@ async def save_paper(
     return paper_id
 
 
+async def get_paper(paper_id: int) -> Optional[dict[str, Any]]:
+    """The stored record of one paper, with its facet texts, its keywords and
+    its chunk count, or None."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
+            "       p.doi, p.url, p.pdf_url, p.abstract, p.methods_summary, p.results_summary, "
+            "       p.parse_mode, "
+            "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks, "
+            "       COALESCE(("
+            "           SELECT array_agg(k.word ORDER BY k.word) FROM paper_keywords pk "
+            "           JOIN keywords k ON k.id = pk.keyword_id WHERE pk.paper_id = p.id"
+            "       ), ARRAY[]::TEXT[]) AS keywords "
+            "FROM papers p WHERE p.id = $1",
+            paper_id,
+        )
+    return dict(row) if row else None
+
+
+async def find_paper(source: str, source_id: str) -> Optional[int]:
+    """The id of the stored paper with this source and source_id, or None."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT id FROM papers WHERE source = $1 AND source_id = $2", source, source_id,
+        )
+
+
 async def update_paper_metadata(paper_id: int, title: Optional[str], authors: Sequence[str]) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:

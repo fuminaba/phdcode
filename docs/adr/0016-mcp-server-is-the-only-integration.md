@@ -16,16 +16,17 @@ and `dcode mcp` (checked 2026-10-08). A connection was not tested.
 ## Decision
 
 phdcode gives its tools to a harness only through one MCP server, with the `mcp`
-SDK (FastMCP), over **stdio**. The harness starts the server for each session.
+SDK 2.x (`MCPServer`, which was FastMCP in 1.x), over **stdio**. The harness
+starts the server for each session: `phdcode-mcp`.
 
 The tools:
 
 | Tool | What it does |
 | --- | --- |
-| `search_sources(query, source)` | A live search of arXiv, PubMed or OpenAlex. Returns an overview. |
-| `get_paper(id)` | The details of one paper. |
-| `save_paper(id)` | Stores a paper as abstract-only. |
-| `ingest_pdf(id or path)` | Makes a full-text paper. Uses Surya only if it already runs. |
+| `search_sources(query, source)` | A live search of arXiv, PubMed or OpenAlex, in the native query syntax of the source. Returns an overview. |
+| `get_paper(paper)` | The details of one paper: a reference, or the id of a stored paper. |
+| `save_paper(paper)` | Stores a paper as abstract-only. |
+| `ingest_pdf(paper or path)` | Makes a full-text paper. Uses Surya only if it already runs. |
 | `search_papers(query, facet)` | Hybrid search over one facet of the papers. |
 | `search_chunks(query, paper_ids)` | Hybrid search over the chunks of the given papers. |
 | `add_saved_search`, `list_saved_searches`, `cancel_saved_search` | Manage the saved searches. |
@@ -41,6 +42,13 @@ No tool starts or waits for a GPU workload ([ADR-0017](0017-gpu-main-slot.md)). 
 - A tool call never blocks on the GPU. Embeddings run on the CPU.
 - The tool results are serialized as text. The overview and details split stays,
   because one full search result used 95% of a 4K context.
+- stdout carries the protocol. The PDF parse runs in a subprocess, so marker
+  cannot write to stdout, and its RAM is freed when the parse ends.
+- An expected failure (bad input, a source that fails, a download that is not
+  a PDF) reaches the agent with its reason. Any other exception is a crash:
+  the SDK hides its message and logs it.
+- A saved search stores its query in the native syntax of its source, the same
+  string that `search_sources` takes.
 
 ## Alternatives rejected
 

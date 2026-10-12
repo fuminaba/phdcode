@@ -30,7 +30,7 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv()
 
 log = logging.getLogger(__name__)
 

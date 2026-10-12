@@ -12,6 +12,11 @@ things.
 **Paper** — one publication from arXiv, PubMed or OpenAlex that the tool
 holds. *Avoid:* document, bookmark.
 
+**Reference** — `<source>:<source_id>`, for example `arxiv:2401.12345`: names a
+paper at its source, stored or not. An arXiv reference has no version, so a new
+version updates the same paper. *Not* a paper id, which only a stored paper
+has.
+
 **Abstract-only paper** — a paper whose only text is its metadata and abstract.
 An answer that cites it says so.
 

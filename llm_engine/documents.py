@@ -1,85 +1,56 @@
+"""The PDF parse: marker, in text mode, on the CPU (ADR-0017).
+
+Text mode reads the text layer only (no OCR), and the models run on the CPU,
+so a parse never needs the GPU. The ingest runs it in a subprocess:
+
+    python -m llm_engine.documents <pdf_path>
+
+The subprocess keeps marker's output away from the MCP server's stdout (the
+protocol channel), and frees marker's RAM when the parse ends.
+"""
 import io
 import os
 import re
+import sys
 from pathlib import Path
-from typing import NamedTuple
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-PAPERS_DIR = Path(os.getenv("LOG_DIR", "logs")) / "papers"
+# A relative LOG_DIR is relative to the repo root: the MCP server can start
+# in any folder.
+PAPERS_DIR = Path(__file__).resolve().parents[1] / os.getenv("LOG_DIR", "logs") / "papers"
 
-# marker-pdf/surya batch sizes -- unset (None) leaves surya's own CUDA
-# defaults (36/32/256/32) in place. Lowered via .env to shrink extraction's
-# peak VRAM spike, which can otherwise collide with Ollama on a shared GPU.
-_BATCH_SIZE_ENV_TO_CONFIG_KEY = {
-    "MARKER_DETECTION_BATCH_SIZE": "detection_batch_size",
-    "MARKER_LAYOUT_BATCH_SIZE": "layout_batch_size",
-    "MARKER_RECOGNITION_BATCH_SIZE": "recognition_batch_size",
-    "MARKER_TABLE_REC_BATCH_SIZE": "table_rec_batch_size",
-}
-
-_converter = None
+# The parse runs beside training (data loaders), so it uses half the cores.
+PARSE_THREADS = max(1, (os.cpu_count() or 2) // 2)
 
 # Matches a run of consecutive markdown table rows (header, separator, data).
 _TABLE_PATTERN = re.compile(r"((?:^\|.*\|\s*\n)+)", re.MULTILINE)
 
 
-class Attachment(NamedTuple):
-    filename: str
-    content: bytes
-
-
-class ExtractedDocument(NamedTuple):
-    filename: str
-    raw_path: Path
-    text_path: Path
-    image_paths: list[Path]
-    table_paths: list[Path]
-
-
-def _get_converter():
-    """Lazily builds (and caches) the marker-pdf converter. Loads several ML
-    models on first call — deliberately not done at import time, so just
-    importing this module (or the package that pulls it in) stays cheap.
-    Cached for the process lifetime: the first call pays for model loading
-    (a few seconds, plus a one-time Triton JIT compile); every call after
-    that is fast, and nothing is held in GPU memory between calls."""
-    global _converter
-    if _converter is None:
-        from marker.config.parser import ConfigParser
-        from marker.converters.pdf import PdfConverter
-        from marker.models import create_model_dict
-
-        batch_config = {
-            config_key: int(os.environ[env_key])
-            for env_key, config_key in _BATCH_SIZE_ENV_TO_CONFIG_KEY.items()
-            if env_key in os.environ
-        }
-        # pdftext's own internal per-page parallelism (default 4 workers)
-        # uses a ProcessPoolExecutor -- which a Celery prefork worker's
-        # child process can't spawn (`daemonic processes are not allowed
-        # to have children`; confirmed via a real ingestion run under the
-        # actual worker, not guessed). Forced to 1 unconditionally: there's
-        # no throughput to gain from it once extraction itself only ever
-        # runs one at a time anyway, serialized through the same queue
-        # this would otherwise conflict with.
-        batch_config["pdftext_workers"] = 1
-        # A "{n}" + 48 dashes line before each page (n from 0), so that each
-        # chunk knows its page (document_index.chunk_text).
-        batch_config["paginate_output"] = True
-        config = ConfigParser(batch_config).generate_config_dict()
-        _converter = PdfConverter(config=config, artifact_dict=create_model_dict())
-    return _converter
+def text_path_for(pdf_path: Path) -> Path:
+    return pdf_path.with_suffix(pdf_path.suffix + ".md")
 
 
 def _extract(path: Path) -> tuple[str, dict]:
     """Returns (markdown_text, images) — images maps filename -> PIL.Image,
     already what marker-pdf extracted from the PDF (figures, embedded
     pictures, etc.), empty if the document has none."""
+    from marker.config.parser import ConfigParser
+    from marker.converters.pdf import PdfConverter
+    from marker.models import create_model_dict
     from marker.output import text_from_rendered
-    rendered = _get_converter()(str(path))
+
+    config = ConfigParser({
+        "disable_ocr": True,
+        # A "{n}" + 48 dashes line before each page (n from 0), so that each
+        # chunk knows its page (document_index.chunk_text).
+        "paginate_output": True,
+        # One process for the text layer; the cores go to the models.
+        "pdftext_workers": 1,
+    }).generate_config_dict()
+    rendered = PdfConverter(config=config, artifact_dict=create_model_dict())(str(path))
     text, _ext, images = text_from_rendered(rendered)
     return text, images
 
@@ -107,56 +78,42 @@ def _extract_tables(markdown_text: str) -> list[str]:
     return [t.strip() for t in _TABLE_PATTERN.findall(markdown_text)]
 
 
-def ingest_document(dir_path: Path, filename: str, content: bytes) -> ExtractedDocument:
-    """Saves an uploaded file into dir_path and extracts its text (marker-pdf),
-    embedded images, and tables (as CSVs) alongside it:
+def parse_pdf(pdf_path: Path) -> Path:
+    """Parses pdf_path and writes the results next to it:
 
-        dir_path/
-            {filename}            <- raw upload
-            {filename}.md         <- extracted markdown
-            images/{name}         <- embedded images, if any
-            tables/{i}.csv        <- extracted tables, if any
+        {pdf}.md              <- extracted markdown, with page separators
+        images/{name}         <- embedded images, if any
+        tables/{i}.csv        <- extracted tables, if any
 
-    dir_path is created by the caller (see memory/document_index.py) using a
-    paper row's own id, so two uploads never collide even with the same
-    filename. Synchronous and CPU/GPU-heavy — call via asyncio.to_thread from
-    async callers.
+    Returns the path of the markdown file. CPU-heavy: run it in a subprocess
+    (see the module docstring), not in the MCP server.
     """
-    dir_path.mkdir(parents=True, exist_ok=True)
-
-    raw_path = dir_path / filename
-    raw_path.write_bytes(content)
-
-    text, images = _extract(raw_path)
-
-    text_path = raw_path.with_suffix(raw_path.suffix + ".md")
+    text, images = _extract(pdf_path)
+    text_path = text_path_for(pdf_path)
     text_path.write_text(text)
 
-    image_paths = []
     if images:
-        images_dir = dir_path / "images"
+        images_dir = pdf_path.parent / "images"
         images_dir.mkdir(exist_ok=True)
         for name, image in images.items():
-            image_path = images_dir / name
-            image.save(image_path)
-            image_paths.append(image_path)
+            image.save(images_dir / name)
 
-    table_paths = []
     for i, table_md in enumerate(_extract_tables(text)):
         try:
             df = _markdown_table_to_dataframe(table_md)
         except Exception:
-            continue  # malformed/OCR-mangled table -- skip it, don't fail the whole upload
-        tables_dir = dir_path / "tables"
+            continue  # malformed table -- skip it, don't fail the whole parse
+        tables_dir = pdf_path.parent / "tables"
         tables_dir.mkdir(exist_ok=True)
-        table_path = tables_dir / f"{i}.csv"
-        df.write_csv(table_path)
-        table_paths.append(table_path)
+        df.write_csv(tables_dir / f"{i}.csv")
 
-    return ExtractedDocument(
-        filename=filename,
-        raw_path=raw_path,
-        text_path=text_path,
-        image_paths=image_paths,
-        table_paths=table_paths,
-    )
+    return text_path
+
+
+if __name__ == "__main__":
+    # Before torch loads: no CUDA context (no VRAM at all), and half the cores.
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["TORCH_DEVICE"] = "cpu"
+    for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ[var] = str(PARSE_THREADS)
+    parse_pdf(Path(sys.argv[1]))

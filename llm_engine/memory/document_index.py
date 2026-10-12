@@ -2,12 +2,14 @@ import asyncio
 import logging
 import os
 import re
+import sys
+from pathlib import Path
 from typing import NamedTuple, Optional
 
 from dotenv import load_dotenv
 
 try:
-    from ..documents import PAPERS_DIR, ingest_document
+    from ..documents import PAPERS_DIR, text_path_for
     from ..embeddings import embed
     from ..generation import generate
     from ..prompts import (
@@ -18,7 +20,7 @@ try:
     )
     from ..schemas import PAPER_METADATA_SCHEMA
 except ImportError:
-    from documents import PAPERS_DIR, ingest_document
+    from documents import PAPERS_DIR, text_path_for
     from embeddings import embed
     from generation import generate
     from prompts import (
@@ -57,9 +59,9 @@ CHUNK_OVERLAP = int(os.getenv("DOCUMENT_CHUNK_OVERLAP", "200"))
 MAP_CHUNK_SIZE = int(os.getenv("DOCUMENT_MAP_CHUNK_SIZE", "8000"))
 MAP_CHUNK_OVERLAP = 300
 
-# marker 1.10.2 runs its OCR models in this process, which is the quality of
-# the balanced mode. The text mode (no OCR, CPU) comes with marker 2.
-PARSE_MODE = "balanced"
+# documents.py parses with no OCR, on the CPU (ADR-0017). The drain upgrades
+# a 'text' paper to 'balanced'.
+PARSE_MODE = "text"
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 # marker's paginate_output line before each page: "{0}" + 48 dashes.
@@ -157,14 +159,16 @@ async def ingest_full_text(
     paper stays full-text and its summaries are pending (ADR-0017). Returns
     one line for each failed step, for the caller to show; [] = all done.
     """
-    dir_path = PAPERS_DIR / str(paper_id)
-    log.info("paper %s: parsing %s", paper_id, filename)
-    extracted = await asyncio.to_thread(ingest_document, dir_path, filename, content)
-    text = extracted.text_path.read_text()
+    pdf_path = PAPERS_DIR / str(paper_id) / Path(filename).name
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    pdf_path.write_bytes(content)
+    log.info("paper %s: parsing %s", paper_id, pdf_path)
+    text_path = await _parse_pdf(pdf_path)
+    text = text_path.read_text()
 
     chunks = chunk_text(text)
     embeddings = await asyncio.to_thread(embed, [c.content for c in chunks]) if chunks else []
-    await set_full_text(paper_id, PARSE_MODE, str(extracted.raw_path), str(extracted.text_path), chunks, embeddings)
+    await set_full_text(paper_id, PARSE_MODE, str(pdf_path), str(text_path), chunks, embeddings)
     log.info("paper %s: indexed %d chunks", paper_id, len(chunks))
 
     steps = [("metadata", extract_paper_metadata)] if extract_metadata else []
@@ -177,6 +181,21 @@ async def ingest_full_text(
             log.exception("paper %s: %s pending", paper_id, name)
             failures.append(f"{name} pending: {type(e).__name__}: {e}")
     return failures
+
+
+async def _parse_pdf(pdf_path: Path) -> Path:
+    """Runs documents.py in a subprocess (see its docstring). Its output goes
+    to parse.log next to the PDF. Returns the path of the markdown file."""
+    log_path = pdf_path.parent / "parse.log"
+    with log_path.open("wb") as log_file:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "llm_engine.documents", str(pdf_path),
+            stdin=asyncio.subprocess.DEVNULL, stdout=log_file, stderr=log_file,
+        )
+        code = await process.wait()
+    if code != 0:
+        raise RuntimeError(f"The PDF parse failed (exit code {code}); see {log_path}.")
+    return text_path_for(pdf_path)
 
 
 async def extract_paper_metadata(paper_id: int, text: str, model_name: Optional[str] = None) -> None:
