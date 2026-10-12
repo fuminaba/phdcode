@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-11 (after `b967398`; step 5 is not committed)
+**Updated:** 2026-10-12 (after `56a9667`; the dcode fix in `llm_engine/mcp_server.py` is not committed)
 
 <!--
 CONVENTION -- read before editing.
@@ -23,7 +23,7 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 ## Blocked on a human
 
-- **Fumi commits step 5** (the GPU lock, llama-server on demand, `phdcode gpu clear` / `restore`). The message is in the vault: `Projects/phdcode/agents/commits/7-code-step5-gpu.md`.
+- **Fumi commits the dcode fix** (`readOnlyHint` on the read-only tools, no output schemas). The message is in the vault: `Projects/phdcode/agents/commits/8-code-dcode-mcp.md`.
 - **`.env`:** `SUMMARY_MODEL="bonsai2-27b"` (Fumi's choice) and `DIGEST_DIR` (the vault folder of the digests). Until then, an ingest leaves the summaries pending.
 - **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. The service runs the sweep, then `phdcode summarize`.
 - **The real saved searches** in the live database. Fumi plans to build an interest profile from a Zotero reference list first.
@@ -52,6 +52,8 @@ Earlier tests (steps 3 and 4) are in the commit messages. The test scripts are n
 - **The reranker downloads 1.2 GB from Hugging Face at its first load** (`TRIAGE_RERANKER`, into `~/.cache/huggingface`). With no network and no cache, triage uses the LLM fallback.
 - **PubMed's `pdf_url` is the PMC article page, not a PDF.** `ingest_pdf` refuses it and asks for a local path.
 - **`phdcode-mcp` uses the live database** (`DATABASE_URL` in `.env`). Its first start creates the new tables there, beside the old ones. A test sets `DATABASE_URL` to `phdcode_test` in the environment, which now wins over `.env`.
+- **Headless dcode (`dcode -n`) rejects each MCP tool without `readOnlyHint`**, because it has no approval prompt. The read-only tools declare it; `ingest_pdf`, `save_paper` and the saved-search writes need the dcode TUI, which asks.
+- **An output schema stops each dcode run at the first tool result** with `BlockingError` (dcode 0.1.73): the MCP client validates the result and imports `jsonschema` on the event loop of the LangGraph server. The tools send JSON text with no schema. `LANGGRAPH_ALLOW_BLOCKING` does not help, because dcode sets it. The traceback is in the server log that `DEEPAGENTS_CODE_DEBUG=1` keeps.
 - **Do not nest `gpu.short_job()`.** The lock is not re-entrant: an inner job cannot take the lock that the outer one holds, so it waits, then runs on the CPU.
 - **A systemd stop of llama-server sent SIGTERM to the router and its model process at once, and the router hung until the 90-s stop timeout.** `KillMode=mixed` sends it to the router only; a stop now takes about 3 s.
 - **A start condition that skips llama-server does not fail the proxy that requires it**; a stale proxy then refused each request. The proxy uses `BindsTo=`, and `phdcode gpu clear` stops the socket.
@@ -67,6 +69,7 @@ Recorded here only where the ADRs do not cover it:
 
 - **`phdcode-llm-proxy.socket`** (systemd user unit, enabled) listens on port 8080. It starts llama-server with Bonsai 2 27B at the first request; llama-server holds 14.4 GB of VRAM and `/tmp/gpu.lock` until 30 minutes after the last request. Check: `systemctl --user is-active phdcode-llm-proxy.socket phdcode-llm.service`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-llm`.
 - Postgres (`alira2-postgres-1`) runs in Docker, with the test database `phdcode_test`. Redis (`alira2-redis-1`) still runs, but nothing uses it.
-- The MCP server is registered in Claude Code (`claude mcp add phdcode`); each session starts its own `phdcode-mcp`.
+- The MCP server is registered in Claude Code (`claude mcp add phdcode`) and in dcode (`~/.deepagents/.mcp.json`, user level, outside the repo); each session starts its own `phdcode-mcp`.
+- The live database holds paper 1 (the nuclei local/global PDF, full text, 17 chunks) from the dcode RAG test on 2026-10-12.
 
 Python environment is the conda env `alira`, with phdcode installed editable (`pip install --no-deps -e .`) and `mcp` 2.3.0. It has no pytest.
