@@ -4,7 +4,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Any, NamedTuple, Optional
 
 from dotenv import load_dotenv
 
@@ -31,7 +31,7 @@ except ImportError:
     )
     from schemas import PAPER_METADATA_SCHEMA
 
-from .db import add_paper_keywords, set_facet, set_full_text, update_paper_metadata
+from .db import add_paper_keywords, save_paper, set_facet, set_full_text, update_paper_metadata
 
 load_dotenv()
 
@@ -136,6 +136,22 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                 break
         i = max(j - step_back, i + 1)  # always make forward progress
     return chunks
+
+
+async def save_record(record: dict[str, Any], concept_embedding: Optional[list[float]] = None) -> int:
+    """Stores a source record (sources.search or sources.lookup) as an
+    abstract-only paper, or updates the stored paper. Embeds the abstract,
+    unless the caller gives its embedding. Returns the paper_id."""
+    abstract = record["abstract_text"] or None
+    if abstract and concept_embedding is None:
+        [concept_embedding] = await asyncio.to_thread(embed, [abstract])
+    return await save_paper(
+        record["src_db"], record["source_id"], record["title"], record["authors"],
+        abstract, concept_embedding if abstract else None,
+        published_date=(record["published_date"] or "")[:10] or None,
+        venue=record["venue"], doi=record["doi"], url=record["hyperlink"],
+        pdf_url=record["pdf_url"], keywords=record["categories"],
+    )
 
 
 async def ingest_full_text(

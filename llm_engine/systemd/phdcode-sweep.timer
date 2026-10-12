@@ -1,0 +1,16 @@
+# Runs phdcode-sweep.service daily at 06:00, or at the next start of the
+# machine if it was off at 06:00. Install as a user unit:
+#
+#   systemctl --user link <repo>/llm_engine/systemd/phdcode-sweep.service
+#   systemctl --user enable --now <repo>/llm_engine/systemd/phdcode-sweep.timer
+#
+# Change the time with `systemctl --user edit phdcode-sweep.timer`.
+[Unit]
+Description=Run the phdcode sweep daily
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

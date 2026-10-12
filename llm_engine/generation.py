@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from typing import Any, Optional
@@ -44,7 +45,11 @@ def generate(
     route = resolve(model_name)
     messages = [{"role": "user", "content": prompt}]
     if schema is not None:
-        messages.insert(0, {"role": "system", "content": json_schema_instruction(schema)})
+        # The model sees a JSON Schema: a Python repr of the fields made
+        # some models reply with single quotes, which is not JSON.
+        reply_model = create_model("Reply", **schema)
+        instruction = json_schema_instruction(json.dumps(reply_model.model_json_schema()))
+        messages.insert(0, {"role": "system", "content": instruction})
 
     response = client(route).chat.completions.create(model=route.name, messages=messages)
     # A reasoning model can put a <think> block before the answer.
@@ -54,4 +59,4 @@ def generate(
         return content
     # The JSON object, without a code fence or text around it.
     json_text = content[content.find("{"):content.rfind("}") + 1]
-    return create_model("Reply", **schema).model_validate_json(json_text).model_dump()
+    return reply_model.model_validate_json(json_text).model_dump()

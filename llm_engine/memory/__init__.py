@@ -9,14 +9,17 @@ from .db import (
     get_pool,
     init_schema,
     list_saved_searches,
+    mark_swept,
+    record_triage,
     save_paper,
     search_chunks,
     search_papers,
     set_facet,
     set_full_text,
+    triaged_source_ids,
     update_paper_metadata,
 )
-from .document_index import extract_paper_metadata, ingest_full_text, summarize_full_text
+from .document_index import extract_paper_metadata, ingest_full_text, save_record, summarize_full_text
 
 __all__ = [
     "FACETS",
@@ -31,11 +34,15 @@ __all__ = [
     "ingest_full_text",
     "init_schema",
     "list_saved_searches",
+    "mark_swept",
+    "record_triage",
     "save_paper",
+    "save_record",
     "search_chunks",
     "search_papers",
     "set_facet",
     "set_full_text",
     "summarize_full_text",
+    "triaged_source_ids",
     "update_paper_metadata",
 ]

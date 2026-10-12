@@ -69,6 +69,13 @@ durable.
    change.
 7. **No Celery, no Redis, no queue table.** A crash during the drain leaves the
    papers in `parse_mode = text`, and the next drain does them again.
+8. **Triage is a short GPU job, not a tenant.** The sweep moves the reranker
+   to the GPU only if `/tmp/gpu.cleared` does not exist and 4 GB of VRAM is
+   free; else it runs on the CPU. If CUDA runs out of memory, the rest runs on
+   the CPU. It holds about 3 GB for seconds: a sweep of 37 hits took 20 s in
+   total on the GPU, against about 2 minutes of triage on the CPU. With the
+   lock (step 5), it takes the lock without a wait, and uses the CPU if the
+   lock is held.
 
 ## Consequences
 
@@ -82,6 +89,9 @@ durable.
   training run.
 - phdcode starts and stops llama-server, so llama-server runs as a systemd user
   unit, not in tmux.
+
+- Until the lock exists, a training run that starts without `phdcode gpu
+  clear` during a sweep can meet the reranker on the card for some seconds.
 
 ## Alternatives rejected
 

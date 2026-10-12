@@ -344,6 +344,34 @@ async def cancel_saved_search(saved_search_id: int) -> bool:
     return status == "UPDATE 1"
 
 
+async def triaged_source_ids(saved_search_id: int, source_ids: Sequence[str]) -> set[str]:
+    """The source_ids that triage already judged for this saved search."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT source_id FROM triaged_hits WHERE saved_search_id = $1 AND source_id = ANY($2)",
+            saved_search_id, list(source_ids),
+        )
+    return {row["source_id"] for row in rows}
+
+
+async def record_triage(saved_search_id: int, source_id: str, probability: float) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO triaged_hits (saved_search_id, source_id, probability) VALUES ($1, $2, $3) "
+            "ON CONFLICT (saved_search_id, source_id) DO UPDATE SET probability = EXCLUDED.probability, "
+            "triaged_at = now()",
+            saved_search_id, source_id, probability,
+        )
+
+
+async def mark_swept(saved_search_id: int) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE saved_searches SET last_swept_at = now() WHERE id = $1", saved_search_id)
+
+
 async def close_pool() -> None:
     global _pool
     if _pool is not None:
