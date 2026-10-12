@@ -99,3 +99,14 @@ CREATE TABLE IF NOT EXISTS saved_searches (
     last_swept_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ
 );
+
+-- Each hit that triage judged, so that the next sweep skips it. The sweep
+-- searches a window of some days (sweep.py), and a hit that waits for triage
+-- has no row, so the next sweep judges it.
+CREATE TABLE IF NOT EXISTS triaged_hits (
+    saved_search_id BIGINT NOT NULL REFERENCES saved_searches (id),
+    source_id TEXT NOT NULL,
+    probability REAL NOT NULL CHECK (probability BETWEEN 0 AND 1),
+    triaged_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (saved_search_id, source_id)
+);

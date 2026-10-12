@@ -31,6 +31,7 @@ from .memory import (
     init_schema,
     list_saved_searches as db_list_saved_searches,
     save_paper as db_save_paper,
+    save_record,
     search_chunks as db_search_chunks,
     search_papers as db_search_papers,
 )
@@ -38,9 +39,9 @@ from .memory import (
 log = logging.getLogger(__name__)
 
 INSTRUCTIONS = """\
-phdcode keeps the user's literature: papers from arXiv and PubMed, stored as
-abstract-only papers (title and abstract) or as full-text papers (the parsed
-PDF in chunks, with pages, and methods and results summaries).
+phdcode keeps the user's literature: papers from arXiv, PubMed and OpenAlex,
+stored as abstract-only papers (title and abstract) or as full-text papers
+(the parsed PDF in chunks, with pages, and methods and results summaries).
 
 - To answer from what the user has: search_papers, then search_chunks on the
   papers it finds. To find new papers: search_sources, then get_paper.
@@ -100,17 +101,6 @@ async def _lookup(ref: str) -> dict[str, Any]:
     return record
 
 
-async def _save(record: dict[str, Any]) -> int:
-    abstract = record["abstract_text"] or None
-    return await db_save_paper(
-        record["src_db"], record["source_id"], record["title"], record["authors"],
-        abstract, await _embed_one(abstract) if abstract else None,
-        published_date=(record["published_date"] or "")[:10] or None,
-        venue=record["venue"], doi=record["doi"], url=record["hyperlink"],
-        pdf_url=record["pdf_url"], keywords=record["categories"],
-    )
-
-
 def _download_pdf(url: str) -> bytes:
     response = requests.get(url, timeout=60, headers={"User-Agent": "phdcode"})
     response.raise_for_status()
@@ -123,7 +113,7 @@ def _download_pdf(url: str) -> bytes:
 
 @tool
 async def search_sources(query: str, source: str, max_results: int = 10) -> list[dict[str, Any]]:
-    """Searches arXiv or PubMed live. Returns an overview of each hit (ref,
+    """Searches arXiv, PubMed or OpenAlex live. Returns an overview of each hit (ref,
     title, authors, date, venue); call get_paper(ref) for the abstract.
 
     query uses the native syntax of the source:
@@ -131,7 +121,11 @@ async def search_sources(query: str, source: str, max_results: int = 10) -> list
       e.g. 'abs:"nuclei segmentation" AND cat:eess.IV'.
     - PubMed: field tags [tiab], [au], [mh] with AND, OR, NOT,
       e.g. '"nuclei segmentation"[tiab] AND histopathology[tiab]'.
-    source: "arxiv" or "pubmed".
+    - OpenAlex: the value of its filter parameter, filters joined by commas
+      (AND); title_and_abstract.search takes AND, OR, NOT and quotes,
+      e.g. 'title_and_abstract.search:"nuclei segmentation",type:article'.
+      Each OpenAlex search uses a small daily budget: prefer arXiv or PubMed.
+    source: "arxiv", "pubmed" or "openalex".
     """
     records = await asyncio.to_thread(sources.search, source, query, max_results)
     return [_overview(r) for r in records]
@@ -140,7 +134,8 @@ async def search_sources(query: str, source: str, max_results: int = 10) -> list
 @tool
 async def get_paper(paper: str) -> dict[str, Any]:
     """The details of one paper. paper is a reference from search_sources
-    ('arxiv:2401.12345', 'pubmed:33649564') or a stored paper_id ('17').
+    ('arxiv:2401.12345', 'pubmed:33649564', 'openalex:W7221365635') or a
+    stored paper_id ('17').
 
     A reference is looked up live at the source. If the paper is stored, the
     result also has its paper_id, parse_mode (null = abstract-only), chunk
@@ -179,7 +174,7 @@ async def save_paper(paper: str) -> dict[str, Any]:
     search_sources, e.g. 'arxiv:2401.12345'. A second save updates the
     stored paper. Returns its paper_id."""
     record = await _lookup(paper)
-    return {"paper_id": await _save(record), "title": record["title"]}
+    return {"paper_id": await save_record(record), "title": record["title"]}
 
 
 @tool
@@ -206,7 +201,7 @@ async def ingest_pdf(paper: str) -> dict[str, Any]:
         if not record["pdf_url"]:
             raise ValueError(f"{paper} has no PDF link. Download the PDF and give its local path.")
         content = await asyncio.to_thread(_download_pdf, record["pdf_url"])
-        paper_id = await _save(record)
+        paper_id = await save_record(record)
         filename, local = f"{record['source_id'].replace('/', '_')}.pdf", False
 
     pending = await ingest_full_text(paper_id, filename, content, extract_metadata=local)

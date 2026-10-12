@@ -47,14 +47,19 @@ interest statement. *Avoid:* hook, alert.
 **Interest statement** — the natural-language description of what makes a hit
 relevant to a saved search. Triage judges each hit against it.
 
+**Hit** — a paper that a saved search returns. A hit is *new* until triage
+judges it for that saved search.
+
 **Sweep** — one pass over all saved searches that collects new hits, triages
-them, and writes a digest.
+them, stores the relevant ones as abstract-only papers, and writes a digest.
 
 **Triage** — the decision, with a probability, whether one hit is relevant to an
-interest statement. Made by a decision model, not by generated text.
+interest statement. Made by a decision model, or by an LLM that replies with
+the probability only. *Not* a generated summary.
 
-**Digest** — the dated note that one sweep writes: the relevant hits, each with
-its triage probability.
+**Digest** — the dated note of the sweeps of one day: for each saved search,
+the relevant hits, each with its triage probability, and the hits that wait
+for triage.
 
 **Drain** — the timer pass that makes Surya the tenant, upgrades every
 paper in *text* parse mode, and makes the pending summaries. CLI only, never a

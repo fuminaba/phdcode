@@ -1,0 +1,10 @@
+# The sweep (ADR-0015, item 6). Install: see phdcode-sweep.timer.
+[Unit]
+Description=phdcode sweep: run the saved searches and write the digest
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The phdcode command of the Python environment where phdcode is installed.
+ExecStart=%h/miniconda3/envs/alira/bin/phdcode sweep
+Nice=10

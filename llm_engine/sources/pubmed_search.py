@@ -222,7 +222,9 @@ def search_pubmed(
         is_open_access = pmcid is not None
         pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/" if pmcid else None
 
-        published_date = paper.get("pubdate", "")
+        # sortpubdate ("2026/10/05 00:00") is ISO-like; pubdate ("2026 Oct 5")
+        # is free text.
+        published_date = paper.get("sortpubdate", "")[:10].replace("/", "-") or paper.get("pubdate", "")
         updated_date = paper.get("epubdate") or published_date
 
         articles.append(

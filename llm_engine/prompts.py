@@ -1,8 +1,8 @@
-def json_schema_instruction(response_schema: dict) -> str:
+def json_schema_instruction(json_schema: str) -> str:
     return (
-        "Reply as a json string which can be directly passed into "
-        f"pydantic, and matches the schema: {response_schema}. "
-        "Do not include any extra text, only the required information."
+        "Reply with one JSON object (double quotes) that matches this JSON "
+        f"Schema: {json_schema}. Do not include any extra text, only the "
+        "required information."
     )
 
 
@@ -49,3 +49,15 @@ def results_summary_prompt(document_text: str) -> str:
     )
 
 
+
+
+def triage_prompt(interest: str, title: str, abstract: str) -> str:
+    return (
+        "You screen new papers for a researcher. Their interest statement:\n"
+        f"{interest}\n\n"
+        "Give the probability (0 to 1) that the researcher finds the paper "
+        "below relevant to this interest. Judge the topic and the method of "
+        "the paper, not its quality. If there is no abstract, judge the title "
+        "alone and stay near 0.5 unless the title is clear.\n\n"
+        f"Title: {title}\n\nAbstract: {abstract or '(none)'}"
+    )

@@ -4,3 +4,7 @@ PAPER_METADATA_SCHEMA = {
     "keywords" : (list[str], ...),
     "abstract" : (str, ...),
 }
+
+TRIAGE_SCHEMA = {
+    "probability": (float, ...),
+}

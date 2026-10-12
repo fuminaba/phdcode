@@ -51,12 +51,25 @@ any agent harness. The vocabulary is in [GLOSSARY.md](../GLOSSARY.md).
    query and an interest statement. A systemd user timer runs the sweep and
    then the drain. The default time is daily at 06:00, and the user changes it
    with `systemctl --user edit`. The sweep writes a dated digest to a folder
-   that a setting names.
+   that a setting names (`DIGEST_DIR`).
+   Each sweep searches the papers of the last 7 days, newest first, so that
+   it also finds a paper that a source indexes late. A table of triaged hits
+   keeps a hit from a second triage; a hit that waits for triage has no row.
+   OpenAlex filters by the publication date, because its filter on the date
+   that it added a paper needs a paid plan.
 7. **Triage.** Triage is a typed decision with a probability:
    `decide(hit, interest_statement) -> probability`, with a threshold for each
    saved search. It uses a System One decision model or, as the fallback, an
    LLM with structured output. It runs on local models only. A labelled set of
-   about 100 papers selects the model and the threshold. Embedding similarity
+   about 100 papers selects the model and the threshold. The decision model
+   is a pointwise reranker (`TRIAGE_RERANKER`, default Qwen3-Reranker-0.6B):
+   it scores each pair (interest statement, paper) alone and gives P("yes")
+   from its logits, so a reply can never be invalid. Its scores are not
+   calibrated. The fallback LLM is `TRIAGE_MODEL` (default `SUMMARY_MODEL`).
+   Tested on 37 hits (2026-10-11): the reranker gave the same order as
+   Bonsai 2 27B, in 16 ms for each hit on the GPU and 3 s on the CPU.
+   A listwise reranker (one prompt with many papers) is rejected: the
+   score of a paper would depend on the other papers of the day. Embedding similarity
    only sets the order of the hits in the digest. If the model needs the GPU
    and the GPU is not available, the hits wait for the next sweep.
 8. **Ingest.** A sweep stores only abstracts. A paper gets its full text only on
