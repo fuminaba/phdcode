@@ -33,18 +33,25 @@ dependencies = [
     "torchvision==0.28.0",
 
     # --- Document ingestion ------------------------------------------------
-    # Pinned to 1.10.2, not 2.x: 2.0.0's layout model is a prompted VLM served
-    # by a vLLM engine in its own container, which cold-starts in minutes and
-    # holds a large fixed slice of VRAM whether or not anything is happening.
-    # On a 16GB card shared with local models that is disqualifying. See
-    # docs/ARCHITECTURE.md.
+    # The text-mode parse (documents.py: no OCR, on the CPU). The balanced
+    # mode uses the Surya server of marker 2.x instead (ADR-0017).
     "marker-pdf[all]==1.10.2",
     "polars==1.42.1",
 
     # --- External connectors -----------------------------------------------
     "requests",
     "pydantic",
+
+    # --- Interface: the MCP server (ADR-0016) ------------------------------
+    # 2.x renamed FastMCP to MCPServer (mcp.server.mcpserver).
+    "mcp==2.3.0",
 ]
+
+[project.scripts]
+phdcode-mcp = "llm_engine.mcp_server:main"
+
+[tool.setuptools.packages.find]
+include = ["llm_engine*"]
 
 # ==============================================================================
 # --- UV CROSS-PLATFORM INDEX CONFIG ---
