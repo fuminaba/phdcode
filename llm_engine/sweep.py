@@ -1,17 +1,18 @@
 """The sweep: one pass over all saved searches (ADR-0015, item 6).
 
 For each saved search, the sweep searches the source for the papers of the
-last LOOKBACK_DAYS days, and triage judges each hit that it has not judged
-before. A relevant hit (probability >= the threshold of the saved search) is
+last LOOKBACK_DAYS days, or since its last complete sweep if that is
+earlier, and triage judges each hit that it has not judged before. A relevant hit (probability >= the threshold of the saved search) is
 stored as an abstract-only paper and goes into the digest, in the order of
 its embedding similarity to the interest statement. The digest is a Markdown
 file for each day in DIGEST_DIR; a second sweep on the same day adds to it.
 
-Triage is triage.decide(): a reranker, on the GPU if it is free. A hit
-without a triage row waits for the next sweep: a hit that the LLM fallback
-could not judge (the sweep goes on), and every new hit if no triage model is
-available (the reranker did not load, and no LLM is set or it is stopped). The window of some
-days also catches a paper that a source indexes late.
+Triage is triage.decide(): a reranker, on the GPU only. A hit without a
+triage row waits for the next sweep: every new hit of a search if the
+reranker cannot run (the GPU is not free, the model does not load), and a
+hit that the LLM could not judge when the LLM triages instead. The search
+is then not marked as swept, so the next sweep looks back far enough. The
+window of some days also catches a paper that a source indexes late.
 
 Run it with `phdcode sweep`. It logs to stderr (the systemd journal).
 """
@@ -65,7 +66,10 @@ async def sweep_one(saved: dict[str, Any]) -> list[str]:
     """Sweeps one saved search. Returns its section of the digest."""
     lines = [f"## {saved['source']}: {saved['query']}", "",
              f"Saved search {saved['id']}, threshold {saved['threshold']:.2f}. Interest: {saved['interest']}", ""]
-    since = date.today() - timedelta(days=LOOKBACK_DAYS)
+    # Back to the last complete sweep at least: hits that waited for triage
+    # (the GPU busy for days) are still found.
+    last = saved["last_swept_at"] or saved["created_at"]
+    since = min(date.today() - timedelta(days=LOOKBACK_DAYS), last.date())
     try:
         hits = await asyncio.to_thread(sources.search, saved["source"], saved["query"], MAX_HITS, since)
     except Exception as e:
@@ -100,7 +104,7 @@ async def sweep_one(saved: dict[str, Any]) -> list[str]:
     else:
         lines.append("No new relevant hits.")
     lines.append("")
-    lines.append(f"Hits in the last {LOOKBACK_DAYS} days: {len(hits)}; new: {len(new)}; "
+    lines.append(f"Hits since {since}: {len(hits)}; new: {len(new)}; "
                  f"relevant: {len(relevant)}.")
     if invalid:
         lines.append(f"Hits that wait for triage (the reply was not a probability): {invalid}.")

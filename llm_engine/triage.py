@@ -7,13 +7,17 @@ generated text. Each pair is scored alone, so a score does not depend on the
 other hits. The scores are not calibrated: the labelled set selects the
 threshold.
 
-The reranker runs on the GPU if that is faster, waits included
-(gpu.short_job, ADR-0017); else, or if CUDA runs out of memory, on the CPU
-with half the cores. On the GPU a hit takes about 16 ms, on the CPU about 3 s.
+The reranker is Qwen3-Reranker-4B, on the GPU only (gpu.short_job,
+ADR-0017). On the hits of one week it removed each false positive of the
+0.6B model (retinal, MR and ultrasound papers at p = 0.8 to 0.98 fell below
+0.2), and it found 7 of 36 frontier-AI architecture papers instead of 1
+(a test on 2026-10-12). If the GPU is not free (training,
+llama-server), decide() raises and the hits wait for the next sweep: one
+model for all judgements, so that the scores of two days compare. The 4B
+model on the CPU would need 16 GB of RAM and about 20 s for each hit.
 
-The fallback is an LLM with structured output (TRIAGE_MODEL, default
-SUMMARY_MODEL): set TRIAGE_RERANKER to "" to use it, and decide() also uses
-it if the reranker does not load.
+The LLM (TRIAGE_MODEL, default SUMMARY_MODEL) judges instead only when
+TRIAGE_RERANKER is set to "".
 """
 import logging
 import os
@@ -30,11 +34,14 @@ load_dotenv()
 
 log = logging.getLogger(__name__)
 
-TRIAGE_RERANKER = os.getenv("TRIAGE_RERANKER", "Qwen/Qwen3-Reranker-0.6B")
+TRIAGE_RERANKER = os.getenv("TRIAGE_RERANKER", "Qwen/Qwen3-Reranker-4B")
 TRIAGE_MODEL = os.getenv("TRIAGE_MODEL") or None
-# Measured for Qwen3-Reranker-0.6B in fp16 at batch 8: 3.0 GB peak.
-TRIAGE_VRAM_MIB = 4096
-_BATCH = {"cuda": 8, "cpu": 1}  # On the CPU, padding in a batch only adds work.
+# Measured for Qwen3-Reranker-4B in bf16 at batch 8: 9,871 MiB peak; 4 s to
+# load, 72 ms for each hit.
+TRIAGE_VRAM_MIB = 12288
+_BATCH = 8
+# The longest wait for another short job (a parse) that holds the GPU lock.
+_LOCK_WAIT_S = 1800
 
 # The input format of the Qwen3-Reranker model card.
 _TASK = "Given a researcher's interest statement, judge whether the paper is relevant to it"
@@ -44,56 +51,33 @@ _PREFIX = ("<|im_start|>system\nJudge whether the Document meets the requirement
 _SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 
-class Reranker:
-    """Loaded once on the CPU. Each score() call moves it to the GPU if that
-    is faster (gpu.short_job), and back to the CPU after. The GPU copy is
-    bf16, the precision of the checkpoint, so the round trip changes no
-    weight."""
-
-    def __init__(self, name: str):
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        torch.set_num_threads(max(1, (os.cpu_count() or 2) // 2))
-        self.tokenizer = AutoTokenizer.from_pretrained(name, padding_side="left")
-        self.model = AutoModelForCausalLM.from_pretrained(name, dtype=torch.float32).eval()
-        self.yes_no = [self.tokenizer.convert_tokens_to_ids(t) for t in ("no", "yes")]
-
-    def score(self, interest: str, hits: list[dict[str, Any]]) -> list[float]:
-        import torch
-        texts = [f"{_PREFIX}<Instruct>: {_TASK}\n<Query>: {interest}\n<Document>: Title: {h['title']}\n"
-                 f"Abstract: {h['abstract_text'] or '(none)'}{_SUFFIX}" for h in hits]
-        # Measured: 16 ms for each hit on the GPU, plus about 3 s to move the
-        # model and start CUDA; 3.1 s for each hit on the CPU.
-        with short_job(TRIAGE_VRAM_MIB, 3 + 0.02 * len(texts), 3.1 * len(texts), "triage") as device:
-            try:
-                return self._score(texts, device)
-            finally:
-                if device == "cuda":
-                    self.model.to("cpu", torch.float32)
-                    torch.cuda.empty_cache()
-
-    def _score(self, texts: list[str], device: str) -> list[float]:
-        import torch
-        scores: list[float] = []
-        while len(scores) < len(texts):
-            try:
-                if device == "cuda" and self.model.device.type != "cuda":
-                    self.model.to("cuda", torch.bfloat16)
-                batch = texts[len(scores):len(scores) + _BATCH[device]]
-                inputs = self.tokenizer(batch, return_tensors="pt", padding=True, add_special_tokens=False)
+def _rerank(interest: str, hits: list[dict[str, Any]]) -> list[float]:
+    """Loads the reranker onto the GPU for this call, and frees it after:
+    the GPU has other tenants between the saved searches of a sweep."""
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    texts = [f"{_PREFIX}<Instruct>: {_TASK}\n<Query>: {interest}\n<Document>: Title: {h['title']}\n"
+             f"Abstract: {h['abstract_text'] or '(none)'}{_SUFFIX}" for h in hits]
+    gpu_seconds = 5 + 0.08 * len(texts)
+    with short_job(TRIAGE_VRAM_MIB, gpu_seconds, gpu_seconds + _LOCK_WAIT_S, "triage") as device:
+        if device != "cuda":
+            raise RuntimeError("the GPU is not free (training or llama-server); the hits wait for the next sweep")
+        tokenizer = AutoTokenizer.from_pretrained(TRIAGE_RERANKER, padding_side="left")
+        model = AutoModelForCausalLM.from_pretrained(
+            TRIAGE_RERANKER, dtype=torch.bfloat16, device_map="cuda").eval()
+        yes_no = [tokenizer.convert_tokens_to_ids(t) for t in ("no", "yes")]
+        try:
+            scores: list[float] = []
+            for i in range(0, len(texts), _BATCH):
+                inputs = tokenizer(texts[i:i + _BATCH], return_tensors="pt", padding=True,
+                                   add_special_tokens=False).to("cuda")
                 with torch.no_grad():
-                    logits = self.model(**inputs.to(device)).logits[:, -1, self.yes_no].float()
-            except torch.cuda.OutOfMemoryError:
-                log.warning("reranker: CUDA out of memory; the rest runs on the CPU")
-                self.model.to("cpu", torch.float32)
-                torch.cuda.empty_cache()
-                device = "cpu"
-                continue
-            scores += torch.softmax(logits, dim=1)[:, 1].tolist()
-        return scores
-
-
-_reranker: Optional[Reranker] = None
+                    logits = model(**inputs).logits[:, -1, yes_no].float()
+                scores += torch.softmax(logits, dim=1)[:, 1].tolist()
+            return scores
+        finally:
+            del model
+            torch.cuda.empty_cache()
 
 
 def _llm_decide(hit: dict[str, Any], interest: str) -> Optional[float]:
@@ -109,16 +93,9 @@ def _llm_decide(hit: dict[str, Any], interest: str) -> Optional[float]:
 
 def decide(hits: list[dict[str, Any]], interest: str) -> list[Optional[float]]:
     """The probability that each hit (a source record) is relevant to
-    interest; None for a hit that the LLM fallback could not judge. Raises
-    if no triage model is available (the hits then wait for the next sweep).
-    The first call loads the reranker; the process keeps it."""
-    global _reranker, TRIAGE_RERANKER
-    if TRIAGE_RERANKER and _reranker is None:
-        try:
-            _reranker = Reranker(TRIAGE_RERANKER)
-        except Exception:
-            log.exception("reranker %s did not load; triage uses the LLM", TRIAGE_RERANKER)
-            TRIAGE_RERANKER = ""  # no second attempt in this process
-    if _reranker is not None:
-        return _reranker.score(interest, hits)
+    interest; None for a hit that the LLM could not judge. Raises if the
+    reranker cannot run (the GPU is not free, the model does not load): the
+    hits then wait for the next sweep."""
+    if TRIAGE_RERANKER:
+        return _rerank(interest, hits)
     return [_llm_decide(hit, interest) for hit in hits]

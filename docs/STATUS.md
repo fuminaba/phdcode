@@ -29,7 +29,7 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 - **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. The service runs the sweep, then `phdcode ingest`, then `phdcode summarize`.
 - **The first sweep of the 10 saved searches** (created 2026-10-12 from the interest profile; the profile is the set of saved searches) waits for Fumi's yes; then the sweep timer.
 - **11 Zotero PDFs are on the Mac** (`/Users/fuminaba/Zotero/storage`). With a copy on the server, `phdcode queue FILES` puts each into the queue of its paper.
-- **The labelled set** (about 100 papers that Fumi labels) selects the triage threshold, and compares Qwen3-Reranker-0.6B with 4B. Until then, the threshold of each saved search is a guess (default 0.5).
+- **The labelled set** (about 100 papers that Fumi labels) selects the triage threshold. Until then, the threshold of each saved search is a guess (default 0.5).
 - **The old rows in Postgres.** The old tables hold 2 documents, 51 chunks, 24 conversations and 7 hooks. Fumi decides: export them, or drop the old tables. The new tables do not touch them.
 - **The server needs a reboot** for the NVIDIA driver (the library is 595.99, the kernel module 595.91). Only NVML fails (`nvidia-smi`); CUDA works. Until the reboot, `gpu.free_vram_mib()` reads the free VRAM through a PyTorch child process (3 s instead of an instant `nvidia-smi`).
 
@@ -49,7 +49,7 @@ Earlier tests (steps 3 and 4) are in the commit messages. The test scripts are n
 - **The Docker Compose project is `alira2`**, from the old repository name; `docker-compose.yml` pins `name: alira2`. Without it, `docker compose up` makes a new, empty project `phdcode`, and port 5432 is already in use.
 - **mcp 2.x is not the API of most examples.** `FastMCP` is `MCPServer` (`mcp.server.mcpserver`); client results use `structured_content` and `is_error`. Only a `ToolError` shows its message to the agent.
 - **OpenAlex with no key has a budget of $0.10 a day: 100 searches.** A lookup by ID is free. A bad filter or a spent budget comes back as an HTTP 400 or 429 with the reason in the body; the client raises it as a `ValueError`. The filter `from_created_date` needs a paid plan. A key goes into `OPENALEX_API_KEY`.
-- **The reranker downloads 1.2 GB from Hugging Face at its first load** (`TRIAGE_RERANKER`, into `~/.cache/huggingface`). With no network and no cache, triage uses the LLM fallback.
+- **The reranker (Qwen3-Reranker-4B) downloads 8 GB from Hugging Face at its first load** (`TRIAGE_RERANKER`, into `~/.cache/huggingface`). It runs only on the GPU: with no network and no cache, or with the GPU busy, the hits wait for the next sweep.
 - **PubMed's `pdf_url` is the PMC article page, not a PDF.** `ingest_pdf` refuses it and asks for a local path.
 - **`phdcode-mcp` uses the live database** (`DATABASE_URL` in `.env`). Its first start creates the new tables there, beside the old ones. A test sets `DATABASE_URL` to `phdcode_test` in the environment, which now wins over `.env`.
 - **Headless dcode (`dcode -n`) rejects each MCP tool without `readOnlyHint`**, because it has no approval prompt. The read-only tools declare it; `ingest_pdf`, `save_paper` and the saved-search writes need the dcode TUI, which asks.

@@ -18,7 +18,7 @@ flowchart LR
     SUM["phdcode summarize"]
     PARSE["marker text parse<br/>GPU if faster, else CPU"]
     EMB["embeddings<br/>Ollama, CPU"]
-    TRI["triage<br/>Qwen3-Reranker-0.6B"]
+    TRI["triage<br/>Qwen3-Reranker-4B, GPU"]
   end
   subgraph store["Storage"]
     PG[("Postgres + pgvector<br/>papers, chunks, chunk links,<br/>saved searches, triaged hits")]
@@ -157,11 +157,11 @@ A **saved search** is a standing query at one source, with an **interest stateme
 ```mermaid
 flowchart LR
   L["llama-server, 14.4 GB<br/>starts at the first request,<br/>stops 30 minutes after the last"] --> G[("RTX 5070 Ti, 16 GB<br/>/tmp/gpu.lock")]
-  J["short jobs: the parse (about 5 GB),<br/>triage (about 3 GB)<br/>GPU only if faster, waits included;<br/>else the CPU"] --> G
+  J["short jobs: the parse (about 5 GB):<br/>GPU only if faster, waits included; else the CPU.<br/>Triage (about 10 GB): GPU only;<br/>else the hits wait for the next sweep"] --> G
   TR["training<br/>phdcode gpu clear, train,<br/>phdcode gpu restore"] --> G
 ```
 
-The embeddings always run on the CPU, so a search never waits for the GPU.
+The embeddings always run on the CPU, so a search never waits for the GPU. Triage runs only on the GPU, so that one model makes all judgements; when the GPU is busy, the next sweep judges the waiting hits.
 
 ## The tools that a chat can call
 
