@@ -57,13 +57,12 @@ def results_summary_prompt(document_text: str) -> str:
 
 
 
-def triage_prompt(interest: str, title: str, abstract: str) -> str:
+def triage_prompt(library: str, title: str, abstract: str) -> str:
+    # The wording of the test against Fumi's labels (ADR-0018); a change
+    # needs the same test.
     return (
-        "You screen new papers for a researcher. Their interest statement:\n"
-        f"{interest}\n\n"
-        "Give the probability (0 to 1) that the researcher finds the paper "
-        "below relevant to this interest. Judge the topic and the method of "
-        "the paper, not its quality. If there is no abstract, judge the title "
-        "alone and stay near 0.5 unless the title is clear.\n\n"
+        f"A PhD student keeps this library of papers:\n{library}\n\n"
+        "A new paper appeared. Give the probability (0 to 1) that this student "
+        "would want to read it.\n\n"
         f"Title: {title}\n\nAbstract: {abstract or '(none)'}"
     )

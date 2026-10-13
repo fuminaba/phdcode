@@ -60,8 +60,14 @@ puts its PDF into the PDF queue.
 **Saved search** — a standing query to arXiv, PubMed or OpenAlex, with an
 interest statement. *Avoid:* hook, alert.
 
-**Interest statement** — the natural-language description of what makes a hit
-relevant to a saved search. Triage judges each hit against it.
+**Interest statement** — the natural-language description of what a saved
+search is for. The digest orders the relevant hits of the search by it. Triage
+does not read it (ADR-0018).
+
+**Library** — the papers that the user added: imported, queued, saved or
+ingested by the user, and the hits that the user marked as relevant. Not the
+papers that the sweep saved. Triage reads the titles of the library.
+*Avoid:* profile.
 
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
@@ -69,9 +75,9 @@ judges it for that saved search.
 **Sweep** — one pass over all saved searches that collects new hits, triages
 them, stores the relevant ones as abstract-only papers, and writes a digest.
 
-**Triage** — the decision, with a probability, whether one hit is relevant to an
-interest statement. Made by a decision model, or by an LLM that replies with
-the probability only. *Not* a generated summary.
+**Triage** — the decision, with a probability, whether the PhD student who
+keeps the library wants to read one hit. Made by the summary model, which
+replies with the probability only. *Not* a generated summary.
 
 **Digest** — the dated note of the sweeps of one day: for each saved search,
 the relevant hits, each with its triage probability, and the hits that wait
@@ -111,7 +117,7 @@ life (ADR-0017). *Not* a lock for each request.
 **Tenant** — the one workload that holds the GPU for a long time: the local
 LLM or training. Embeddings are never a tenant; they run on the CPU.
 
-**Short job** — a GPU job of seconds (the text parse, triage) that uses the GPU
+**Short job** — a GPU job of seconds (the text parse) that uses the GPU
 only if that is faster than the CPU, waits included. *Not* a tenant.
 
 **Agent backend** — the setting that names the model that drives the harness. If

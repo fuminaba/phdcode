@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS papers (
 -- the paper then leaves the queue until its source is set again.
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS pdf_source TEXT;
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS pdf_error TEXT;
+-- 'sweep': the sweep saved the paper; NULL: the user added it. Triage reads
+-- the titles of the user's papers only (ADR-0018).
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS origin TEXT;
 
 CREATE INDEX IF NOT EXISTS papers_concept_embedding_idx
     ON papers USING hnsw (concept_embedding vector_cosine_ops);

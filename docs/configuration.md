@@ -22,8 +22,7 @@ phdcode reads its settings from `.env` at the root of the repository. A variable
 | `SUMMARY_MODEL` | `AGENT_BACKEND` | The model of the methods and results summaries, and of the metadata of a local PDF. |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | The Ollama embedding model. It runs on the CPU. |
 | `EMBEDDING_DIM` | `768` | The dimension of the embeddings. It must match `EMBEDDING_MODEL`. A change needs new embeddings for all papers. |
-| `TRIAGE_RERANKER` | `Qwen/Qwen3-Reranker-4B` | The reranker that judges the hits of the sweep, on the GPU only (about 10 GB). It downloads 8 GB from Hugging Face at its first load. If the GPU is not free, the hits wait for the next sweep. |
-| `TRIAGE_MODEL` | `SUMMARY_MODEL` | The LLM that judges the hits instead, when `TRIAGE_RERANKER` is set to `""`. |
+| `TRIAGE_MODEL` | `SUMMARY_MODEL` | The LLM that judges each hit of the sweep: does the student with this library want it? If its server cannot answer (the GPU is cleared for training), the hits wait for the next sweep. |
 
 ## Chunks
 

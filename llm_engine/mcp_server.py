@@ -69,7 +69,7 @@ stored as abstract-only papers (title and abstract) or as full-text papers
   and + 1), or a linked figure or table, call get_chunks.
 - save_paper keeps an abstract-only paper. ingest_pdf makes a full-text paper.
 - A saved search is a standing query that a daily sweep runs; triage judges
-  each new hit against its interest statement.
+  whether the user, given the papers of their library, wants each new hit.
 """
 
 
@@ -326,13 +326,15 @@ async def get_chunks(paper_id: int, chunk_indexes: list[int]) -> list[dict[str, 
 
 
 @tool
-async def add_saved_search(source: str, query: str, interest: str, threshold: float = 0.5) -> dict[str, Any]:
+async def add_saved_search(source: str, query: str, interest: str, threshold: float = 0.3) -> dict[str, Any]:
     """Adds a standing query that the daily sweep runs.
 
     source and query are as in search_sources. interest is a sentence or two
-    about what makes a hit relevant; triage judges each new hit against it.
-    threshold (0 to 1) is the triage probability a hit needs to go into the
-    digest.
+    about what the search is for; the digest orders the relevant hits by it.
+    Triage judges each new hit against the user's library, not against the
+    interest. threshold (0 to 1) is the triage probability a hit needs to go
+    into the digest; 0.3 kept 41 of 71 hits and missed 2 of 24 relevant ones
+    in the test of 2026-10-12.
     """
     if not 0 <= threshold <= 1:
         raise ValueError("threshold must be between 0 and 1.")
