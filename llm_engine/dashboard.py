@@ -36,6 +36,9 @@ SOURCE_URL = {
     "pubmed": "https://pubmed.ncbi.nlm.nih.gov/{}/",
     "openalex": "https://openalex.org/{}",
 }
+# The same page as the documentation site (mkdocs.yml), so that the two
+# cannot differ.
+HOW_PAGE = Path(__file__).resolve().parents[1] / "docs" / "how-it-works.md"
 _DIGEST_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
 # No raw HTML: the paper text comes from a PDF.
 _markdown = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -191,8 +194,10 @@ async def paper(request: Request, paper_id: int):
         raise HTTPException(404, f"No paper has id {paper_id}.")
     queue, chunks, hits = await asyncio.gather(
         _fetch("SELECT pdf_source, pdf_error FROM papers WHERE id = $1", paper_id),
-        _fetch("SELECT chunk_index, page_start, page_end, content FROM chunks "
-               "WHERE paper_id = $1 ORDER BY chunk_index", paper_id),
+        _fetch("SELECT c.chunk_index, c.page_start, c.page_end, c.section, c.content, "
+               "       (SELECT array_agg(l.kind || ' ' || l.label || ' → chunk ' || l.to_index ORDER BY l.to_index) "
+               "        FROM chunk_links l WHERE l.paper_id = c.paper_id AND l.from_index = c.chunk_index) AS links "
+               "FROM chunks c WHERE c.paper_id = $1 ORDER BY c.chunk_index", paper_id),
         _fetch("SELECT t.saved_search_id, t.probability, t.triaged_at, s.threshold FROM triaged_hits t "
                "JOIN saved_searches s ON s.id = t.saved_search_id "
                "WHERE s.source = $1 AND t.source_id = $2", stored["source"], stored["source_id"]),
@@ -257,4 +262,4 @@ async def digests(request: Request, day: str = ""):
 
 @app.get("/how")
 async def how(request: Request):
-    return _page(request, "how.html")
+    return _page(request, "how.html", html=_markdown.render(HOW_PAGE.read_text()))

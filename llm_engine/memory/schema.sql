@@ -89,6 +89,23 @@ CREATE TABLE IF NOT EXISTS chunks (
     UNIQUE (paper_id, chunk_index)
 );
 
+-- The section path of a chunk: the headings above it, "Methods > Data".
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS section TEXT;
+
+-- The links between the chunks of one paper (document_index.chunk_links): a
+-- mention of a figure or a table to the chunk with its caption, and marker's
+-- internal links (ref: another part of the paper; citation: the reference
+-- list). The order is no link: the neighbours of chunk i are i - 1 and i + 1.
+-- Chunk indexes, not chunk ids: set_full_text replaces both together.
+CREATE TABLE IF NOT EXISTS chunk_links (
+    paper_id BIGINT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    from_index INT NOT NULL,
+    to_index INT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('figure', 'table', 'ref', 'citation')),
+    label TEXT NOT NULL,
+    PRIMARY KEY (paper_id, from_index, to_index)
+);
+
 CREATE INDEX IF NOT EXISTS chunks_embedding_idx
     ON chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS chunks_search_vector_idx ON chunks USING GIN (search_vector);

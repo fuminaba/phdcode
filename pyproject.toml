@@ -56,6 +56,10 @@ dependencies = [
     "uvicorn==0.52.4",
 ]
 
+[project.optional-dependencies]
+# The documentation site (mkdocs.yml): `pip install .[docs]`, then `mkdocs build`.
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
+
 [project.scripts]
 phdcode = "llm_engine.cli:main"
 phdcode-mcp = "llm_engine.mcp_server:main"

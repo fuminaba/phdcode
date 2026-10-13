@@ -25,6 +25,14 @@ An answer that cites it says so.
 **Chunk** — one retrievable piece of the full text of a paper, with its page,
 its embedding and its keyword index. The source of a quoted passage.
 
+**Section path** — the headings above a chunk, from the top level down:
+"Methods > Data". Each chunk has one.
+
+**Chunk link** — a reference from one chunk to another chunk of the same paper:
+to the chunk with a figure or a table that it mentions, to another part of the
+paper, or to the reference list (a *citation*). The order of the chunks is no
+link: the neighbours of chunk *i* are *i* − 1 and *i* + 1.
+
 **Parse mode** — how the PDF of a full-text paper was turned into text:
 *text* (the text layer only, no OCR) or *balanced* (a vision model reads
 the pages where the text layer is bad).

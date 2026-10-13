@@ -12,7 +12,7 @@ import requests
 from dotenv import load_dotenv
 
 try:
-    from ..documents import PAPERS_DIR, PARSE_VRAM_MIB, parse_seconds, text_path_for
+    from ..documents import PAPERS_DIR, PARSE_VRAM_MIB, first_pages, parse_seconds, text_path_for
     from ..gpu import short_job
     from ..embeddings import embed
     from ..generation import generate
@@ -23,8 +23,9 @@ try:
         results_summary_prompt,
     )
     from ..schemas import PAPER_METADATA_SCHEMA
+    from ..sources import lookup
 except ImportError:
-    from documents import PAPERS_DIR, PARSE_VRAM_MIB, parse_seconds, text_path_for
+    from documents import PAPERS_DIR, PARSE_VRAM_MIB, first_pages, parse_seconds, text_path_for
     from gpu import short_job
     from embeddings import embed
     from generation import generate
@@ -35,10 +36,17 @@ except ImportError:
         results_summary_prompt,
     )
     from schemas import PAPER_METADATA_SCHEMA
+    from sources import lookup
 
 from .db import (
     add_paper_keywords,
+    find_paper_by_doi,
+    find_paper_by_pdf_source,
+    find_paper_in_text,
+    full_text_papers,
+    get_paper,
     pending_papers,
+    queue_pdf,
     queued_pdfs,
     save_paper,
     set_facet,
@@ -83,12 +91,19 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _PAGE_SEPARATOR_RE = re.compile(r"^\{(\d+)\}-{3,}$")
 _FIGURE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _BLOCK = ("|", "![")  # the first characters of a table or a figure unit
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+
+
+def _clean_heading(title: str) -> str:
+    """The plain text of a heading: no HTML anchor, no bold or italic marks."""
+    return " ".join(re.sub(r"<[^>]+>|[*_]+", "", title).split())
 
 
 class Chunk(NamedTuple):
     content: str
     page_start: int  # 1-indexed
     page_end: int    # 1-indexed, inclusive
+    section: str = ""  # the headings above the chunk, "Methods > Data"
 
 
 def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[Chunk]:
@@ -110,14 +125,21 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     with "|"), and figure links ("![](name)") with the caption line after
     them. A large block is a chunk of its own, and the overlap never repeats
     a block.
+
+    Each chunk has the section path of its first unit: the Markdown headings
+    above it, from the top level down.
     """
-    units: list[tuple[int, str]] = []
+    units: list[tuple[int, str, str]] = []  # (page, text, section)
     page = 1
     block: list[str] = []  # a table, or figure links that wait for their caption
+    headings: list[tuple[int, str]] = []  # (level, title) from the top level down
+
+    def section() -> str:
+        return " > ".join(title for _, title in headings)
 
     def end_block() -> None:
         if block:
-            units.append((page, "\n".join(block)))
+            units.append((page, "\n".join(block), section()))
             block.clear()
 
     for line in text.splitlines():
@@ -139,10 +161,17 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
             block.append(stripped)
             end_block()
             continue
+        heading = _HEADING_RE.match(stripped)
+        if heading:
+            level = len(heading.group(1))
+            while headings and headings[-1][0] >= level:
+                headings.pop()
+            if title := _clean_heading(heading.group(2)):
+                headings.append((level, title))
         for sentence in _SENTENCE_SPLIT_RE.split(stripped):
             sentence = sentence.strip()
             if sentence:
-                units.append((page, sentence))
+                units.append((page, sentence, section()))
     end_block()
 
     chunks: list[Chunk] = []
@@ -160,9 +189,9 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
 
         current_units = units[i:j]
         content = current_units[0][1]
-        for (_, previous), (_, sentence) in zip(current_units, current_units[1:]):
+        for (_, previous, _), (_, sentence, _) in zip(current_units, current_units[1:]):
             content += ("\n" if sentence.startswith(_BLOCK) or previous.startswith(_BLOCK) else " ") + sentence
-        chunks.append(Chunk(content, current_units[0][0], current_units[-1][0]))
+        chunks.append(Chunk(content, current_units[0][0], current_units[-1][0], current_units[0][2]))
 
         if j >= n:
             break
@@ -184,6 +213,59 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                 break
         i = max(j - step_back, i + 1)  # always make forward progress
     return chunks
+
+
+class Link(NamedTuple):
+    from_index: int
+    to_index: int
+    kind: str   # figure, table, ref (another part of the paper) or citation (the reference list)
+    label: str  # the text of the reference, e.g. "Fig. 3" or "Brody et al., 2022"
+
+
+# A mention of a figure or a table: "Fig. 3", "Figure 3", "Figs. 3", "Table 2".
+_MENTION_RE = re.compile(r"(Extended Data )?\b(Fig(?:ure)?s?\.?|Tables?)\s*(\d+)\b")
+# Its caption: after a figure link, at the start of a line, or after "**",
+# with ":", "|" or "." after the number ("**Fig. 1 | Overview", "Table 2: Accuracy").
+_CAPTION_RE = re.compile(r"(?:^|\n|\*\*|\)\n)\s*(?:<span[^>]*></span>)?\**\s*"
+                         r"(Extended Data )?(Fig(?:ure)?\.?|Table)\s*(\d+)\s*\**\s*[.:|]")
+# marker's internal links and their targets, when the PDF has hyperlinks.
+_LINK_RE = re.compile(r"\[([^\]]*)\]\(#(page-\d+-\d+)\)")
+_ANCHOR_RE = re.compile(r'<span id="(page-\d+-\d+)">')
+_REFERENCES_RE = re.compile(r"\b(references|bibliography)\b", re.IGNORECASE)
+
+
+def _figure_key(extended: Optional[str], word: str, number: str) -> tuple[str, str]:
+    kind = "table" if word.lower().startswith("table") else "figure"
+    return ("extended " if extended else "") + kind, number
+
+
+def chunk_links(chunks: list[Chunk]) -> list[Link]:
+    """The links between the chunks of one paper, at most one for each pair:
+    a mention of a figure or a table to the chunk with its caption, and
+    marker's internal links to the chunk with their target (a citation if
+    the target is in the reference list). The order of the chunks is no
+    link: the neighbours of chunk i are i - 1 and i + 1."""
+    captions: dict[tuple[str, str], int] = {}
+    anchors: dict[str, int] = {}
+    for i, chunk in enumerate(chunks):
+        for m in _CAPTION_RE.finditer(chunk.content):
+            captions.setdefault(_figure_key(*m.groups()), i)
+        for anchor in _ANCHOR_RE.findall(chunk.content):
+            anchors.setdefault(anchor, i)
+    links: dict[tuple[int, int], Link] = {}
+    for i, chunk in enumerate(chunks):
+        for m in _MENTION_RE.finditer(chunk.content):
+            key = _figure_key(*m.groups())
+            j = captions.get(key)
+            if j is not None and j != i:
+                links.setdefault((i, j), Link(i, j, key[0].split()[-1], m.group(0)))
+        for text, anchor in _LINK_RE.findall(chunk.content):
+            j = anchors.get(anchor)
+            if j is not None and j != i:
+                kind = "citation" if _REFERENCES_RE.search(chunks[j].section) else "ref"
+                label = re.sub(r"[\\()\[\]]", "", _clean_heading(text)).strip(";, –-")[:80]
+                links.setdefault((i, j), Link(i, j, kind, label))
+    return list(links.values())
 
 
 async def save_record(record: dict[str, Any], concept_embedding: Optional[list[float]] = None) -> int:
@@ -237,15 +319,37 @@ async def ingest_full_text(
     pdf_path.write_bytes(content)
     log.info("paper %s: parsing %s", paper_id, pdf_path)
     text_path = await _parse_pdf(pdf_path)
-    text = text_path.read_text()
-
-    chunks = chunk_text(text)
-    embeddings = await asyncio.to_thread(embed, [c.content for c in chunks]) if chunks else []
-    await set_full_text(paper_id, PARSE_MODE, str(pdf_path), str(text_path), chunks, embeddings)
-    log.info("paper %s: indexed %d chunks", paper_id, len(chunks))
+    text = await index_text(paper_id, PARSE_MODE, pdf_path, text_path)
     if not run_models:
         return []
     return await run_model_steps(paper_id, text, extract_metadata, model_name)
+
+
+async def index_text(paper_id: int, parse_mode: str, pdf_path: Path, text_path: Path) -> str:
+    """Chunks the parsed text of a paper, embeds the chunks (CPU), finds
+    their links, and replaces the stored chunks. Returns the text."""
+    text = Path(text_path).read_text()
+    chunks = chunk_text(text)
+    embeddings = await asyncio.to_thread(embed, [c.content for c in chunks]) if chunks else []
+    links = chunk_links(chunks)
+    await set_full_text(paper_id, parse_mode, str(pdf_path), str(text_path), chunks, embeddings, links)
+    log.info("paper %s: indexed %d chunks, %d links", paper_id, len(chunks), len(links))
+    return text
+
+
+async def rechunk(paper_ids: Optional[list[int]] = None) -> list[str]:
+    """`phdcode rechunk`: indexes the parsed text of each full-text paper
+    again (all, or paper_ids), with no new parse and no model step: after a
+    change to the chunker or to the links. Returns one line for each paper."""
+    report = []
+    for paper in await full_text_papers(paper_ids):
+        try:
+            await index_text(paper["id"], paper["parse_mode"], Path(paper["pdf_path"]), Path(paper["text_path"]))
+            report.append(f"paper {paper['id']}: indexed again")
+        except Exception as e:  # a missing text file stops only this paper
+            log.exception("paper %s: rechunk failed", paper["id"])
+            report.append(f"paper {paper['id']}: failed: {type(e).__name__}: {e}")
+    return report
 
 
 def download_pdf(url: str) -> bytes:
@@ -256,6 +360,69 @@ def download_pdf(url: str) -> bytes:
             f"{url} did not return a PDF. Download the PDF and call ingest_pdf with its local path."
         )
     return response.content
+
+
+_DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>]+")
+_ARXIV_RE = re.compile(r"arXiv:\s*(\d{4}\.\d{4,5})")
+
+
+async def paper_for_pdf(path: Path) -> tuple[int, str]:
+    """The paper of a local PDF, and how it was found, in this order:
+    0. a paper already has this file in its PDF queue (a second
+       `phdcode queue` of the file);
+    1. a DOI on its first two pages is stored (an arXiv ID counts as the DOI
+       10.48550/arxiv.<id>, which OpenAlex gives to arXiv papers);
+    2. the title of a stored paper is on its first page;
+    3. the DOI that OpenAlex gives for that DOI is stored (OpenAlex leads a
+       preprint DOI to the journal version);
+    4. OpenAlex knows the DOI: a new abstract-only paper;
+    5. else a new empty paper: `phdcode summarize` (or ingest_pdf) reads its
+       title, authors and abstract from the parsed text.
+    Steps 0 to 2 need no network. Tested on the 31 parsed PDFs of
+    2026-10-12: each one went to its own paper. The journal PDFs show a DOI;
+    the arXiv PDFs show only the arXiv ID."""
+    if (paper_id := await find_paper_by_pdf_source(str(path))) is not None:
+        return paper_id, "this file is in its queue"
+    pages = await asyncio.to_thread(first_pages, path)
+    text = " ".join(pages)
+    doi_match, arxiv_match = _DOI_RE.search(text), _ARXIV_RE.search(text)
+    doi = (doi_match.group(0).rstrip(".,;)]") if doi_match
+           else f"10.48550/arxiv.{arxiv_match.group(1)}" if arxiv_match else None)
+    if doi and (paper_id := await find_paper_by_doi(doi)) is not None:
+        return paper_id, f"stored paper, DOI {doi}"
+    if pages and (paper_id := await find_paper_in_text(pages[0])) is not None:
+        return paper_id, "stored paper, its title is on page 1"
+    record = await asyncio.to_thread(lookup, f"openalex:doi:{doi}") if doi else None
+    if record and record["doi"] and (paper_id := await find_paper_by_doi(record["doi"])) is not None:
+        return paper_id, f"stored paper, DOI {record['doi']} (OpenAlex, for {doi})"
+    if record:
+        return await save_record(record), f"new paper from {record['ref']}"
+    return await save_paper(None, None, None, [], None, None), "new paper, metadata from the text at summarize"
+
+
+async def queue_local_pdfs(paths: list[Path], paper_id: Optional[int] = None) -> list[str]:
+    """`phdcode queue`: each local PDF into the queue of its paper
+    (paper_for_pdf, or paper_id for one PDF). A paper that has full text is
+    skipped. The file must stay in place until `phdcode ingest` copies it.
+    Returns one line for each PDF."""
+    if paper_id is not None and len(paths) != 1:
+        raise ValueError("--paper takes one PDF.")
+    report = []
+    for path in paths:
+        path = path.expanduser().resolve()
+        if not path.is_file() or not path.read_bytes().startswith(b"%PDF"):
+            report.append(f"{path}: skipped, not a PDF")
+            continue
+        target, how = (paper_id, "given") if paper_id is not None else await paper_for_pdf(path)
+        paper = await get_paper(target)
+        if paper is None:
+            report.append(f"{path}: skipped, no paper {target}")
+        elif paper["parse_mode"]:
+            report.append(f"{path}: skipped, paper {target} already has full text ({paper['title']})")
+        else:
+            await queue_pdf(target, str(path))
+            report.append(f"{path}: queued for paper {target} ({how}): {paper['title'] or 'no title yet'}")
+    return report
 
 
 async def ingest_queue(limit: Optional[int] = None) -> list[str]:
@@ -407,3 +574,20 @@ if __name__ == "__main__":
     parts = [c.content for c in chunk_text(figure, chunk_size=10, overlap=50)]
     assert "![](_page_1_Figure_1.jpeg)\n*Fig. 1. A caption. Two.*" in parts, parts
     print("chunk_text: ok")
+
+    paper = (
+        "# 1 Introduction\n\nAs Fig. 1 shows, see Table 2 and [Smith, 2020](#page-3-0). More text here.\n\n"
+        "![](_page_1_Figure_1.jpeg)\n\n**Fig. 1 | Overview.** A caption.\n\n"
+        "Table 2: Accuracy of the models.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n"
+        "# References\n\n<span id=\"page-3-0\"></span>Smith, J. 2020. A paper.\n"
+    )
+    pieces = chunk_text(paper, chunk_size=60, overlap=0)
+    assert pieces[0].section == "1 Introduction" and pieces[-1].section == "References", pieces
+    found = {(link.kind, link.label) for link in chunk_links(pieces)}
+    assert found == {("figure", "Fig. 1"), ("table", "Table 2"), ("citation", "Smith, 2020")}, found
+    print("chunk_links: ok")
+
+    page = "Br J Cancer (2021) 124:686; https://doi.org/10.1038/s41416-020-01122-x. arXiv:2004.09666v2 [cs.CV]"
+    assert _DOI_RE.search(page).group(0).rstrip(".,;)]") == "10.1038/s41416-020-01122-x"
+    assert _ARXIV_RE.search(page).group(1) == "2004.09666"
+    print("pdf ids: ok")

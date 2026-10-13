@@ -136,6 +136,40 @@ async def find_paper_by_doi(doi: str) -> Optional[int]:
         return await conn.fetchval("SELECT id FROM papers WHERE lower(doi) = lower($1) ORDER BY id LIMIT 1", doi)
 
 
+async def find_paper_by_pdf_source(pdf_source: str) -> Optional[int]:
+    """The id of the paper whose PDF queue holds (or held) this source, or None."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT id FROM papers WHERE pdf_source = $1 ORDER BY id LIMIT 1", pdf_source)
+
+
+async def find_paper_in_text(text: str) -> Optional[int]:
+    """The stored paper whose title is in the text (letters and digits only,
+    any case), or None. The longest title wins, so that the first page of
+    "How Attentive are Graph Attention Networks?" is not the PDF of "Graph
+    Attention Networks"."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT id FROM (SELECT id, regexp_replace(lower(title), '[^a-z0-9]', '', 'g') AS t FROM papers) p "
+            "WHERE t <> '' AND strpos(regexp_replace(lower($1), '[^a-z0-9]', '', 'g'), t) > 0 "
+            "ORDER BY length(t) DESC, id LIMIT 1",
+            text,
+        )
+
+
+async def full_text_papers(paper_ids: Optional[Sequence[int]] = None) -> list[dict[str, Any]]:
+    """The full-text papers (all, or these ids) with their parse mode and files."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, parse_mode, pdf_path, text_path FROM papers "
+            "WHERE parse_mode IS NOT NULL AND ($1::bigint[] IS NULL OR id = ANY($1)) ORDER BY id",
+            None if paper_ids is None else list(paper_ids),
+        )
+    return [dict(row) for row in rows]
+
+
 async def queue_pdf(paper_id: int, pdf_source: str) -> None:
     """Puts the PDF of a paper (a URL or a local path) into the queue of
     `phdcode ingest`, and clears an earlier failure."""
@@ -216,23 +250,29 @@ async def set_full_text(
         text_path: str,
         chunks: Sequence[Any],
         embeddings: Sequence[list[float]],
+        links: Sequence[Any] = (),
 ) -> None:
-    """Replaces all chunks of a paper and records how its PDF was parsed, in
-    one transaction. The first parse and the upgrade both use this, so a
-    crash leaves the old chunks and the old parse_mode. Each chunk is a
-    document_index.Chunk (or anything with .content/.page_start/.page_end),
-    in text order."""
+    """Replaces all chunks of a paper and their links, and records how its
+    PDF was parsed, in one transaction. The first parse and the upgrade
+    both use this, so a crash leaves the old chunks and the old parse_mode.
+    Each chunk is a document_index.Chunk, in text order; each link a
+    document_index.Link."""
     rows = [
-        (paper_id, i, chunk.content, chunk.page_start, chunk.page_end, embedding)
+        (paper_id, i, chunk.content, chunk.page_start, chunk.page_end, chunk.section or None, embedding)
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=True))
     ]
     pool = await get_pool()
     async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("DELETE FROM chunk_links WHERE paper_id = $1", paper_id)
         await conn.execute("DELETE FROM chunks WHERE paper_id = $1", paper_id)
         await conn.executemany(
-            "INSERT INTO chunks (paper_id, chunk_index, content, page_start, page_end, embedding) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO chunks (paper_id, chunk_index, content, page_start, page_end, section, embedding) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
             rows,
+        )
+        await conn.executemany(
+            "INSERT INTO chunk_links (paper_id, from_index, to_index, kind, label) VALUES ($1, $2, $3, $4, $5)",
+            [(paper_id, link.from_index, link.to_index, link.kind, link.label) for link in links],
         )
         await conn.execute(
             "UPDATE papers SET parse_mode = $1, pdf_path = $2, text_path = $3, updated_at = now() "
@@ -252,6 +292,12 @@ async def set_full_text(
 # max_results after combining.
 _RRF_K = 60
 _CANDIDATE_POOL = 20
+# The links of chunk c, as a JSON array (asyncpg returns it as text).
+_LINKS_OF_CHUNK = (
+    "(SELECT coalesce(json_agg(json_build_object('to', l.to_index, 'kind', l.kind, 'label', l.label) "
+    "ORDER BY l.to_index), '[]') FROM chunk_links l "
+    "WHERE l.paper_id = c.paper_id AND l.from_index = c.chunk_index)"
+)
 
 
 async def pending_papers() -> list[dict[str, Any]]:
@@ -351,11 +397,27 @@ async def search_chunks(
         await conn.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
         rows = await conn.fetch(
             _rrf_cte("chunks", "embedding", "search_vector", "($6::bigint[] IS NULL OR paper_id = ANY($6))")
-            + "SELECT c.paper_id, p.title, c.chunk_index, c.page_start, c.page_end, c.content, f.score "
+            + "SELECT c.paper_id, p.title, c.chunk_index, c.page_start, c.page_end, c.section, c.content, "
+            f"{_LINKS_OF_CHUNK} AS links, f.score "
             "FROM fused f JOIN chunks c ON c.id = f.id JOIN papers p ON p.id = c.paper_id "
             "ORDER BY f.score DESC LIMIT $3",
             query_embedding, query, max_results, _CANDIDATE_POOL, _RRF_K,
             None if paper_ids is None else list(paper_ids),
+        )
+    return [dict(row) for row in rows]
+
+
+async def get_chunks(paper_id: int, chunk_indexes: Sequence[int]) -> list[dict[str, Any]]:
+    """The chunks of one paper with these indexes, in text order, with the
+    title of the paper and the links of each chunk."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT c.paper_id, p.title, c.chunk_index, c.page_start, c.page_end, c.section, c.content, "
+            f"{_LINKS_OF_CHUNK} AS links "
+            "FROM chunks c JOIN papers p ON p.id = c.paper_id "
+            "WHERE c.paper_id = $1 AND c.chunk_index = ANY($2) ORDER BY c.chunk_index",
+            paper_id, list(chunk_indexes),
         )
     return [dict(row) for row in rows]
 
