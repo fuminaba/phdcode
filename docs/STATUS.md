@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-12 (after `2377e60`; `phdcode backup`, the chunk links and `phdcode queue` are not committed)
+**Updated:** 2026-10-12 (after `8682e90`)
 
 <!--
 CONVENTION -- read before editing.
@@ -27,7 +27,7 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 - **18 PDFs of the import failed to download**: 16 publishers answered 403 (Wiley, MDPI, ScienceDirect, ASCO, JAMA, BMJ, JNCCN), 1 link is dead (404), 1 returned a web page. A browser user agent also gets 403. Fumi downloads them; `phdcode queue FILES`, then `phdcode ingest` and `phdcode summarize`. The interface lists them (filter "PDF failed").
 - **The documentation site is built, not deployed.** `mkdocs.yml` and `wrangler.jsonc` follow the tea site. Fumi connects the repository to a Cloudflare Worker (build: `pip install "mkdocs>=1.6,<2" "mkdocs-material>=9.5" "mkdocstrings[python]>=0.24" && mkdocs build`; deploy: `npx wrangler deploy`), adds the domain, and scopes Cloudflare Access to that Worker only.
 - **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. The service runs the sweep, then `phdcode ingest`, then `phdcode summarize`.
-- **The interest profile, then the real saved searches.** The 80 imported papers are the basis; the agent drafts the profile, and Fumi confirms it.
+- **The first sweep of the 10 saved searches** (created 2026-10-12 from the interest profile; the profile is the set of saved searches) waits for Fumi's yes; then the sweep timer.
 - **11 Zotero PDFs are on the Mac** (`/Users/fuminaba/Zotero/storage`). With a copy on the server, `phdcode queue FILES` puts each into the queue of its paper.
 - **The labelled set** (about 100 papers that Fumi labels) selects the triage threshold, and compares Qwen3-Reranker-0.6B with 4B. Until then, the threshold of each saved search is a guess (default 0.5).
 - **The old rows in Postgres.** The old tables hold 2 documents, 51 chunks, 24 conversations and 7 hooks. Fumi decides: export them, or drop the old tables. The new tables do not touch them.
