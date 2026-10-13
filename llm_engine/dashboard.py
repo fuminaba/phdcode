@@ -29,7 +29,7 @@ from .memory import close_pool, get_paper, get_pool, pending_papers
 from .memory.document_index import CHUNK_OVERLAP, CHUNK_SIZE, MAP_CHUNK_SIZE
 from .sources import OPENALEX_API_KEY, PUBMED_API_KEY
 from .sweep import DIGEST_DIR, LOOKBACK_DAYS, MAX_HITS
-from .triage import TRIAGE_MODEL, TRIAGE_RERANKER
+from .triage import TRIAGE_MODEL
 
 SOURCE_URL = {
     "arxiv": "https://arxiv.org/abs/{}",
@@ -124,8 +124,8 @@ def _system() -> dict[str, Any]:
 def _config() -> list[tuple[str, Any]]:
     return [
         ("Summary model (SUMMARY_MODEL)", SUMMARY_MODEL or "not set: summaries stay pending"),
-        ("Triage reranker (TRIAGE_RERANKER)", TRIAGE_RERANKER or "none: triage uses the LLM"),
-        ("Triage LLM fallback (TRIAGE_MODEL)", TRIAGE_MODEL or f"{SUMMARY_MODEL} (the summary model)"),
+        ("Triage model (TRIAGE_MODEL): does the student with this library want the paper?",
+         TRIAGE_MODEL or f"{SUMMARY_MODEL} (the summary model)"),
         ("Embedding model (CPU, Ollama)", EMBEDDING_MODEL),
         ("Chunk size / overlap (characters)", f"{CHUNK_SIZE} / {CHUNK_OVERLAP}"),
         ("Summary map chunk (characters)", MAP_CHUNK_SIZE),

@@ -26,6 +26,7 @@ def generate(
         prompt: str,
         model_name: Optional[str] = None,
         schema: Optional[dict[str, Any]] = None,
+        thinking: bool = True,
 ) -> str | dict[str, Any]:
     """One chat completion through the route of model_name.
 
@@ -38,6 +39,10 @@ def generate(
     through the Celery queue (ADR-0015). It takes no GPU lock: the model
     server is the GPU tenant and holds the lock for its full life (ADR-0017).
     If the server is stopped, the call raises openai.APIConnectionError.
+
+    thinking=False asks the chat template for no reasoning (enable_thinking;
+    Qwen-style templates such as Bonsai's read it, others ignore it) and
+    uses temperature 0: a short judgement that repeats (triage).
     """
     model_name = model_name or SUMMARY_MODEL
     if not model_name:
@@ -51,7 +56,9 @@ def generate(
         instruction = json_schema_instruction(json.dumps(reply_model.model_json_schema()))
         messages.insert(0, {"role": "system", "content": instruction})
 
-    response = client(route).chat.completions.create(model=route.name, messages=messages)
+    options = {} if thinking else {
+        "temperature": 0, "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    response = client(route).chat.completions.create(model=route.name, messages=messages, **options)
     # A reasoning model can put a <think> block before the answer.
     content = (response.choices[0].message.content or "").split("</think>")[-1].strip()
 

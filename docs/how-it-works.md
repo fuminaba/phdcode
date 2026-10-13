@@ -18,7 +18,7 @@ flowchart LR
     SUM["phdcode summarize"]
     PARSE["marker text parse<br/>GPU if faster, else CPU"]
     EMB["embeddings<br/>Ollama, CPU"]
-    TRI["triage<br/>Qwen3-Reranker-4B, GPU"]
+    TRI["triage<br/>the summary model:<br/>does the student with<br/>this library want it?"]
   end
   subgraph store["Storage"]
     PG[("Postgres + pgvector<br/>papers, chunks, chunk links,<br/>saved searches, triaged hits")]
@@ -41,6 +41,7 @@ flowchart LR
   MCP -- "search_papers, search_chunks,<br/>get_chunks" --> PG
   SW --> SRC
   SW --> TRI
+  TRI -- "one question<br/>for each hit" --> LLM
   TRI --> PG
   SW --> DIG
   SUM -- "summaries" --> LLM
@@ -139,29 +140,29 @@ The order of the chunks needs no link: the neighbours of chunk *i* are *i* − 1
 
 ```mermaid
 flowchart TD
-  T["06:00 timer"] --> Q["each saved search: its query at its source,<br/>the last 7 days, at most 50 hits"]
+  T["06:00 timer"] --> Q["each saved search: its query at its source,<br/>since its last complete sweep (at least 7 days),<br/>at most 50 hits"]
   Q --> N{"judged before?"}
   N -- "yes" --> X["skip"]
-  N -- "no" --> R["triage: the probability that the hit<br/>matches the interest statement"]
+  N -- "no" --> R["triage: the probability that the PhD student<br/>with this library wants to read the hit"]
   R --> H["record it in triaged hits"]
   H --> TH{"at or above the threshold?"}
   TH -- "yes" --> SV["save as an abstract-only paper<br/>+ a line in today's digest"]
   TH -- "no" --> NO["only the count in the digest"]
-  SV --> SM["then: phdcode ingest, phdcode summarize, phdcode backup"]
+  SV --> SM["then: phdcode summarize, phdcode backup<br/>(phdcode ingest runs before the sweep)"]
 ```
 
-A **saved search** is a standing query at one source, with an **interest statement** and a threshold. Triage judges each new hit against the interest statement of its search.
+A **saved search** is a standing query at one source, with an **interest statement** and a threshold (0.3 by default). Triage does not read the interest statement. It asks the summary model one question for each hit: given the titles of your **library** (the papers that you added, and the hits that you marked as relevant; not the sweep's own papers), would this PhD student want to read the paper? The interest statement orders the relevant hits in the digest ([ADR-0018](adr/0018-triage-by-the-library.md)).
 
 ## 6. The GPU: one tenant at a time
 
 ```mermaid
 flowchart LR
   L["llama-server, 14.4 GB<br/>starts at the first request,<br/>stops 30 minutes after the last"] --> G[("RTX 5070 Ti, 16 GB<br/>/tmp/gpu.lock")]
-  J["short jobs: the parse (about 5 GB):<br/>GPU only if faster, waits included; else the CPU.<br/>Triage (about 10 GB): GPU only;<br/>else the hits wait for the next sweep"] --> G
+  J["short jobs: the parse (about 5 GB)<br/>GPU only if faster, waits included;<br/>else the CPU"] --> G
   TR["training<br/>phdcode gpu clear, train,<br/>phdcode gpu restore"] --> G
 ```
 
-The embeddings always run on the CPU, so a search never waits for the GPU. Triage runs only on the GPU, so that one model makes all judgements; when the GPU is busy, the next sweep judges the waiting hits.
+The embeddings always run on the CPU, so a search never waits for the GPU. Triage uses llama-server, so it waits during training: the next sweep judges the waiting hits, with the same model.
 
 ## The tools that a chat can call
 

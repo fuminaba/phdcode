@@ -83,3 +83,4 @@ nav:
       - "ADR 0015: a literature RAG tool": adr/0015-rescope-to-literature-rag-tool.md
       - "ADR 0016: the MCP server": adr/0016-mcp-server-is-the-only-integration.md
       - "ADR 0017: the GPU policy": adr/0017-gpu-main-slot.md
+      - "ADR 0018: triage by the library": adr/0018-triage-by-the-library.md

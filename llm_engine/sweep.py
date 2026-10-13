@@ -7,11 +7,13 @@ stored as an abstract-only paper and goes into the digest, in the order of
 its embedding similarity to the interest statement. The digest is a Markdown
 file for each day in DIGEST_DIR; a second sweep on the same day adds to it.
 
-Triage is triage.decide(): a reranker, on the GPU only. A hit without a
-triage row waits for the next sweep: every new hit of a search if the
-reranker cannot run (the GPU is not free, the model does not load), and a
-hit that the LLM could not judge when the LLM triages instead. The search
-is then not marked as swept, so the next sweep looks back far enough. The
+Triage is triage.decide(): the summary model judges whether the student
+with the user's library wants each hit (ADR-0018). A hit without a triage
+row waits for the next sweep: every new hit of a search if the model server
+cannot answer (the GPU is cleared for training), and a hit whose reply was
+not a probability. The search is then not marked as swept, so the next
+sweep looks back far enough. The interest statement of a saved search only
+orders its relevant hits in the digest. The
 window of some days also catches a paper that a source indexes late.
 
 Run it with `phdcode sweep`. It logs to stderr (the systemd journal).
@@ -31,6 +33,7 @@ from .embeddings import embed
 from .memory import (
     close_pool,
     init_schema,
+    library_titles,
     list_saved_searches,
     mark_swept,
     record_triage,
@@ -81,7 +84,7 @@ async def sweep_one(saved: dict[str, Any]) -> list[str]:
     relevant: list[tuple[dict[str, Any], float]] = []
     waiting, invalid = None, 0
     try:
-        probabilities = await asyncio.to_thread(decide, new, saved["interest"]) if new else []
+        probabilities = await asyncio.to_thread(decide, new, await library_titles()) if new else []
     except Exception as e:
         log.exception("saved search %s: triage failed", saved["id"])
         waiting = f"Hits that wait for triage: {len(new)} ({type(e).__name__}: {e})."
@@ -98,7 +101,7 @@ async def sweep_one(saved: dict[str, Any]) -> list[str]:
         texts = [saved["interest"]] + [h["abstract_text"] or h["title"] for h, _ in relevant]
         interest_vector, *vectors = await asyncio.to_thread(embed, texts)
         for (hit, _), vector in zip(relevant, vectors):
-            await save_record(hit, vector)
+            await save_record(hit, vector, origin="sweep")
         order = sorted(range(len(relevant)), key=lambda i: -_cosine(interest_vector, vectors[i]))
         lines += [_hit_line(*relevant[i]) for i in order]
     else:

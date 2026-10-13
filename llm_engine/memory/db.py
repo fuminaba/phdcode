@@ -68,19 +68,23 @@ async def save_paper(
         url: Optional[str] = None,
         pdf_url: Optional[str] = None,
         keywords: Sequence[str] = (),
+        origin: Optional[str] = None,
 ) -> int:
     """Stores a paper as abstract-only, or updates a paper that is already
     stored (same source and source_id). A value that is None (or empty
     authors) keeps the stored value, so a call with fewer fields never
     erases metadata, for example the pdf_url that the upgrade needs. A full
     text, if any, stays. A local PDF has source and source_id None and
-    always gets a new row. Returns the paper id."""
+    always gets a new row. origin "sweep" marks a paper that the sweep
+    saved; a save by the user (origin None) makes any paper the user's, and
+    a save by the sweep never takes a paper from the user. Returns the
+    paper id."""
     pool = await get_pool()
     async with pool.acquire() as conn, conn.transaction():
         paper_id = await conn.fetchval(
             "INSERT INTO papers (source, source_id, title, authors, abstract, concept_embedding, "
-            "                    published_date, venue, doi, url, pdf_url) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) "
+            "                    published_date, venue, doi, url, pdf_url, origin) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) "
             "ON CONFLICT (source, source_id) DO UPDATE SET "
             "    title = COALESCE(EXCLUDED.title, papers.title), "
             "    authors = COALESCE(NULLIF(EXCLUDED.authors, '{}'), papers.authors), "
@@ -91,10 +95,11 @@ async def save_paper(
             "    doi = COALESCE(EXCLUDED.doi, papers.doi), "
             "    url = COALESCE(EXCLUDED.url, papers.url), "
             "    pdf_url = COALESCE(EXCLUDED.pdf_url, papers.pdf_url), "
+            "    origin = CASE WHEN EXCLUDED.origin IS NULL THEN NULL ELSE papers.origin END, "
             "    updated_at = now() "
             "RETURNING id",
             source, source_id, title, list(authors), abstract, concept_embedding,
-            published_date, venue, doi, url, pdf_url,
+            published_date, venue, doi, url, pdf_url, origin,
         )
         await _link_keywords(conn, paper_id, keywords)
     return paper_id
@@ -127,6 +132,15 @@ async def find_paper(source: str, source_id: str) -> Optional[int]:
         return await conn.fetchval(
             "SELECT id FROM papers WHERE source = $1 AND source_id = $2", source, source_id,
         )
+
+
+async def library_titles() -> list[str]:
+    """The titles of the user's papers (not the sweep's), oldest first: the
+    library that triage reads (ADR-0018)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT title FROM papers WHERE origin IS NULL AND title IS NOT NULL ORDER BY id")
+    return [row["title"] for row in rows]
 
 
 async def find_paper_by_doi(doi: str) -> Optional[int]:

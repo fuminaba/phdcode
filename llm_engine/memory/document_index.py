@@ -268,10 +268,12 @@ def chunk_links(chunks: list[Chunk]) -> list[Link]:
     return list(links.values())
 
 
-async def save_record(record: dict[str, Any], concept_embedding: Optional[list[float]] = None) -> int:
+async def save_record(record: dict[str, Any], concept_embedding: Optional[list[float]] = None,
+                      origin: Optional[str] = None) -> int:
     """Stores a source record (sources.search or sources.lookup) as an
     abstract-only paper, or updates the stored paper. Embeds the abstract,
-    unless the caller gives its embedding. Returns the paper_id."""
+    unless the caller gives its embedding. origin: see db.save_paper.
+    Returns the paper_id."""
     abstract = record["abstract_text"] or None
     if abstract and concept_embedding is None:
         [concept_embedding] = await asyncio.to_thread(embed, [abstract])
@@ -280,7 +282,7 @@ async def save_record(record: dict[str, Any], concept_embedding: Optional[list[f
         abstract, concept_embedding if abstract else None,
         published_date=(record["published_date"] or "")[:10] or None,
         venue=record["venue"], doi=record["doi"], url=record["hyperlink"],
-        pdf_url=record["pdf_url"], keywords=record["categories"],
+        pdf_url=record["pdf_url"], keywords=record["categories"], origin=origin,
     )
 
 

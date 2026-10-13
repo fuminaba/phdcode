@@ -6,11 +6,12 @@ After=network-online.target
 [Service]
 Type=oneshot
 # The phdcode command of the Python environment where phdcode is installed.
-# The sweep, then the PDF queue (its parses use the GPU while llama-server is
-# stopped), then the pending summaries (they start llama-server through its
-# socket), then the backup. "-": the next step runs also if a step fails.
-ExecStart=-%h/miniconda3/envs/alira/bin/phdcode sweep
+# The PDF queue first (its parses use the GPU while llama-server is stopped),
+# then the sweep (triage starts llama-server through its socket, ADR-0018),
+# then the pending summaries (the same llama-server), then the backup. "-":
+# the next step runs also if a step fails.
 ExecStart=-%h/miniconda3/envs/alira/bin/phdcode ingest
+ExecStart=-%h/miniconda3/envs/alira/bin/phdcode sweep
 ExecStart=-%h/miniconda3/envs/alira/bin/phdcode summarize
 ExecStart=%h/miniconda3/envs/alira/bin/phdcode backup
 Nice=10
