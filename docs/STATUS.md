@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-12 (after `d3e76e9`; the reference-list import is not committed)
+**Updated:** 2026-10-12 (after `2377e60`; `phdcode backup` is not committed)
 
 <!--
 CONVENTION -- read before editing.
@@ -23,8 +23,9 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 ## Blocked on a human
 
-- **Fumi commits the reference-list import.** The message is in the vault: `Projects/phdcode/agents/commits/10-code-import.md`.
-- **The full PDF queue: Fumi's yes.** 46 PDFs wait. `phdcode ingest` (about 2 minutes for each journal paper on the GPU), then `phdcode summarize` (Bonsai; see "In progress" for the time).
+- **Fumi commits `phdcode backup`.** The message is in the vault: `Projects/phdcode/agents/commits/11-code-backup.md`.
+- **The summary model for the queue: Fumi decides.** Bonsai with thinking on (about 7 minutes for each journal paper, no wrong numbers found) or with thinking off (about 76 s, less detail). The comparison with gpt-oss is in the vault: `Projects/phdcode/notes/2026-10-12 Summary model comparison.md`.
+- **The full PDF queue: Fumi's yes.** 46 PDFs wait. `phdcode ingest` (about 2 minutes for each journal paper on the GPU), then `phdcode summarize`, then `phdcode backup`.
 - **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. The service runs the sweep, then `phdcode ingest`, then `phdcode summarize`.
 - **The interest profile, then the real saved searches.** The 80 imported papers are the basis; the agent drafts the profile, and Fumi confirms it.
 - **11 Zotero PDFs are on the Mac** (`/Users/fuminaba/Zotero/storage`). With a copy on the server, `phdcode import FILE --zotero-storage DIR` queues them first.
@@ -37,7 +38,8 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 The reference-list import is written and tested, not committed:
 - **`phdcode import ~/Downloads/Fumi-Thesis-Proposal.bib`** (74 s): 80 of 87 entries saved as abstract-only papers (OpenAlex by DOI, PubMed, arXiv); 7 skipped (no ID: FDA documents, statistics, a challenge page, a patent); 48 PDFs queued; 12 papers have no abstract (some publishers withhold it from OpenAlex).
 - **`phdcode ingest --limit 2`** parsed papers 4 (26 pages, 156 s) and 6 (23 pages, 102 s) on the GPU.
-- **`phdcode summarize` of papers 4 and 6 took 902 s** (about 7.5 minutes for each journal paper: the digests, then about 4 minutes for the methods and results summaries, which Bonsai writes long). For the 46 queued papers: about 1.5 hours of parses, then about 5.5 hours of summaries; llama-server holds the GPU during the summaries.
+- **`phdcode summarize` of papers 4 and 6 took 902 s** (about 7.5 minutes for each journal paper). Most of the time is Bonsai's hidden reasoning (about 83 % of the generated tokens for paper 6). `reasoning_effort: low` did not make it faster. For the 46 queued papers: about 1.5 hours of parses, then about 5.5 hours of summaries; llama-server holds the GPU during the summaries.
+- **`phdcode backup`** dumps the phdcode tables (`pg_dump` in the Postgres container; 1.1 MB with 3 full-text papers) to `logs/backup/` (7 kept) and copies `logs/papers/` and the dumps one way to `BACKUP_REMOTE` (in `.env`: the vault on Drive, `Obsidian/ALT/Resources/phdcode-papers/`). The first run took 43 s. The vault sync (`vault.sh`) excludes that folder; the exclude went in before the folder existed, so it needed no resync.
 - **Tables and figures in chunks:** a table keeps its rows, and figure links stay with their caption; `search_chunks` returns the figures of each passage (file and link). Papers 1, 4 and 6 were chunked again from their text with a script (no new parse).
 
 Not done: the `balanced` mode (Surya, marker 2), deferred by ADR-0017 item 9. `embed()` sends all chunks in one request (600 s timeout); add batches before a book or a thesis goes in.
@@ -56,6 +58,7 @@ Earlier tests (steps 3 and 4) are in the commit messages. The test scripts are n
 - **Headless dcode (`dcode -n`) rejects each MCP tool without `readOnlyHint`**, because it has no approval prompt. The read-only tools declare it; `ingest_pdf`, `save_paper` and the saved-search writes need the dcode TUI, which asks.
 - **An output schema stops each dcode run at the first tool result** with `BlockingError` (dcode 0.1.73): the MCP client validates the result and imports `jsonschema` on the event loop of the LangGraph server. The tools send JSON text with no schema. `LANGGRAPH_ALLOW_BLOCKING` does not help, because dcode sets it. The traceback is in the server log that `DEEPAGENTS_CODE_DEBUG=1` keeps.
 - **The overview page of the interface takes about 3 s** while NVML fails (the driver mismatch before the reboot): the free VRAM then comes from a PyTorch child process.
+- **Ollama is outside the GPU rules.** A model that Ollama loads (for example gpt-oss for a test) holds VRAM that `phdcode gpu check` and the short jobs then miss; with Bonsai loaded, a second model does not fit. Unload it after a test: `ollama stop <model>`.
 - **The test database and the live database share `logs/papers/`**, and their paper IDs overlap: a test PDF stayed in the folder of live paper 6. A test must also set `LOG_DIR` to another folder. The old test folders are in `logs/test-papers/` (the rows of `phdcode_test` still point to `logs/papers/`). An ingest now empties the folder of its paper first.
 - **Do not nest `gpu.short_job()`.** The lock is not re-entrant: an inner job cannot take the lock that the outer one holds, so it waits, then runs on the CPU.
 - **A systemd stop of llama-server sent SIGTERM to the router and its model process at once, and the router hung until the 90-s stop timeout.** `KillMode=mixed` sends it to the router only; a stop now takes about 3 s.

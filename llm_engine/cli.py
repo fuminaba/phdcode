@@ -4,6 +4,8 @@
     phdcode import FILE  a reference list (BibTeX) into the library, with its
                          PDFs in the queue
     phdcode ingest       parses each PDF in the queue (no summaries)
+    phdcode backup       dumps the phdcode tables, and copies the paper
+                         folders and the dumps to BACKUP_REMOTE
     phdcode summarize    makes the pending summaries (and the metadata of a
                          local PDF) through SUMMARY_MODEL
     phdcode gpu clear    before a training run: stops llama-server, and no
@@ -33,6 +35,7 @@ def main() -> None:
     ingest = commands.add_parser("ingest", help="parse each PDF in the queue; then run phdcode summarize")
     ingest.add_argument("--limit", type=int, help="parse at most this many PDFs")
     commands.add_parser("summarize", help="make the pending summaries through SUMMARY_MODEL")
+    commands.add_parser("backup", help="dump the tables; copy the papers and the dumps to BACKUP_REMOTE")
     gpu_parser = commands.add_parser("gpu", help="the GPU around a training run (ADR-0017)")
     gpu_commands = gpu_parser.add_subparsers(dest="gpu_command", required=True)
     gpu_commands.add_parser("clear", help="before training: stop llama-server; no phdcode GPU user starts")
@@ -59,6 +62,9 @@ def main() -> None:
     elif args.command == "summarize":
         from .memory import run_pending_steps
         print("\n".join(asyncio.run(_with_db(run_pending_steps()))) or "No pending papers.")
+    elif args.command == "backup":
+        from .backup import backup
+        print("\n".join(backup()))
     elif args.command == "gpu":
         from . import gpu
         if args.gpu_command == "clear":
