@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-12 (after `2377e60`; `phdcode backup` is not committed)
+**Updated:** 2026-10-12 (after `2377e60`; `phdcode backup`, the chunk links and `phdcode queue` are not committed)
 
 <!--
 CONVENTION -- read before editing.
@@ -23,24 +23,21 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 ## Blocked on a human
 
-- **Fumi commits `phdcode backup`.** The message is in the vault: `Projects/phdcode/agents/commits/11-code-backup.md`.
-- **The summary model for the queue: Fumi decides.** Bonsai with thinking on (about 7 minutes for each journal paper, no wrong numbers found) or with thinking off (about 76 s, less detail). The comparison with gpt-oss is in the vault: `Projects/phdcode/notes/2026-10-12 Summary model comparison.md`.
-- **The full PDF queue: Fumi's yes.** 46 PDFs wait. `phdcode ingest` (about 2 minutes for each journal paper on the GPU), then `phdcode summarize`, then `phdcode backup`.
+- **Fumi commits `phdcode backup`, then the chunk links.** The messages are in the vault: `Projects/phdcode/agents/commits/11-code-backup.md` and `12-code-chunk-links.md`.
+- **18 PDFs of the import failed to download**: 16 publishers answered 403 (Wiley, MDPI, ScienceDirect, ASCO, JAMA, BMJ, JNCCN), 1 link is dead (404), 1 returned a web page. A browser user agent also gets 403. Fumi downloads them; `phdcode queue FILES`, then `phdcode ingest` and `phdcode summarize`. The interface lists them (filter "PDF failed").
+- **The documentation site is built, not deployed.** `mkdocs.yml` and `wrangler.jsonc` follow the tea site. Fumi connects the repository to a Cloudflare Worker (build: `pip install "mkdocs>=1.6,<2" "mkdocs-material>=9.5" "mkdocstrings[python]>=0.24" && mkdocs build`; deploy: `npx wrangler deploy`), adds the domain, and scopes Cloudflare Access to that Worker only.
 - **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. The service runs the sweep, then `phdcode ingest`, then `phdcode summarize`.
 - **The interest profile, then the real saved searches.** The 80 imported papers are the basis; the agent drafts the profile, and Fumi confirms it.
-- **11 Zotero PDFs are on the Mac** (`/Users/fuminaba/Zotero/storage`). With a copy on the server, `phdcode import FILE --zotero-storage DIR` queues them first.
+- **11 Zotero PDFs are on the Mac** (`/Users/fuminaba/Zotero/storage`). With a copy on the server, `phdcode queue FILES` puts each into the queue of its paper.
 - **The labelled set** (about 100 papers that Fumi labels) selects the triage threshold, and compares Qwen3-Reranker-0.6B with 4B. Until then, the threshold of each saved search is a guess (default 0.5).
 - **The old rows in Postgres.** The old tables hold 2 documents, 51 chunks, 24 conversations and 7 hooks. Fumi decides: export them, or drop the old tables. The new tables do not touch them.
 - **The server needs a reboot** for the NVIDIA driver (the library is 595.99, the kernel module 595.91). Only NVML fails (`nvidia-smi`); CUDA works. Until the reboot, `gpu.free_vram_mib()` reads the free VRAM through a PyTorch child process (3 s instead of an instant `nvidia-smi`).
 
 ## In progress
 
-The reference-list import is written and tested, not committed:
-- **`phdcode import ~/Downloads/Fumi-Thesis-Proposal.bib`** (74 s): 80 of 87 entries saved as abstract-only papers (OpenAlex by DOI, PubMed, arXiv); 7 skipped (no ID: FDA documents, statistics, a challenge page, a patent); 48 PDFs queued; 12 papers have no abstract (some publishers withhold it from OpenAlex).
-- **`phdcode ingest --limit 2`** parsed papers 4 (26 pages, 156 s) and 6 (23 pages, 102 s) on the GPU.
-- **`phdcode summarize` of papers 4 and 6 took 902 s** (about 7.5 minutes for each journal paper). Most of the time is Bonsai's hidden reasoning (about 83 % of the generated tokens for paper 6). `reasoning_effort: low` did not make it faster. For the 46 queued papers: about 1.5 hours of parses, then about 5.5 hours of summaries; llama-server holds the GPU during the summaries.
-- **`phdcode backup`** dumps the phdcode tables (`pg_dump` in the Postgres container; 1.1 MB with 3 full-text papers) to `logs/backup/` (7 kept) and copies `logs/papers/` and the dumps one way to `BACKUP_REMOTE` (in `.env`: the vault on Drive, `Obsidian/ALT/Resources/phdcode-papers/`). The first run took 43 s. The vault sync (`vault.sh`) excludes that folder; the exclude went in before the folder existed, so it needed no resync.
-- **Tables and figures in chunks:** a table keeps its rows, and figure links stay with their caption; `search_chunks` returns the figures of each passage (file and link). Papers 1, 4 and 6 were chunked again from their text with a script (no new parse).
+The PDF queue of the import ended on 2026-10-12 at 16:26 PDT (3 h 28 min: the parses on the GPU, then the Bonsai summaries, then `phdcode backup`). 31 of 81 papers have full text and summaries; 18 PDFs failed (see above).
+
+Built and tested, not committed: the chunk links (`phdcode rechunk`, the tool `get_chunks`) and `phdcode queue` (a local PDF to its stored paper, by its DOI, its arXiv ID or its title; else a new paper). `phdcode rechunk` of the 31 full-text papers took 33 minutes (2,171 chunks, 3,498 links), because the CPU embeddings are slower than 57 ms for each chunk.
 
 Not done: the `balanced` mode (Surya, marker 2), deferred by ADR-0017 item 9. `embed()` sends all chunks in one request (600 s timeout); add batches before a book or a thesis goes in.
 

@@ -1,0 +1,13 @@
+{
+  // Assets-only Worker: no `main`, no Worker script. Cloudflare serves the
+  // MkDocs output directly. `site/` is gitignored and produced by the build
+  // command (`mkdocs build`) before `wrangler deploy` runs.
+  "name": "phdcode-docs",
+  "compatibility_date": "2026-10-12",
+  "assets": {
+    "directory": "./site",
+    // MkDocs emits directory-style URLs (reference/tools/index.html), so the
+    // 404 page is the only rewrite needed; everything else resolves to a file.
+    "not_found_handling": "404-page"
+  }
+}

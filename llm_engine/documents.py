@@ -41,6 +41,17 @@ def parse_seconds(pdf_path: Path) -> tuple[float, float]:
     pages = len(pypdfium2.PdfDocument(str(pdf_path)))
     return 15 + 5 * pages, 15 + 36 * pages
 
+
+def first_pages(pdf_path: Path, count: int = 2) -> list[str]:
+    """The text layer of the first pages of a PDF (no parse; empty for a
+    scan)."""
+    import pypdfium2
+    pdf = pypdfium2.PdfDocument(str(pdf_path))
+    try:
+        return [pdf[i].get_textpage().get_text_bounded() for i in range(min(count, len(pdf)))]
+    finally:
+        pdf.close()
+
 # Matches a run of consecutive markdown table rows (header, separator, data).
 _TABLE_PATTERN = re.compile(r"((?:^\|.*\|\s*\n)+)", re.MULTILINE)
 

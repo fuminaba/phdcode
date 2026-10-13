@@ -9,6 +9,7 @@ to stderr, and the PDF parse runs in a subprocess (documents.py).
 """
 import asyncio
 import functools
+import json
 import logging
 import os
 import re
@@ -31,11 +32,13 @@ from .memory import (
     close_pool,
     download_pdf,
     find_paper,
+    get_chunks as db_get_chunks,
     get_paper as db_get_paper,
     ingest_full_text,
     init_schema,
     list_saved_searches as db_list_saved_searches,
-    save_paper as db_save_paper,
+    paper_for_pdf,
+    queue_pdf,
     save_record,
     search_chunks as db_search_chunks,
     search_papers as db_search_papers,
@@ -60,6 +63,10 @@ stored as abstract-only papers (title and abstract) or as full-text papers
   and its link). When a table or a figure answers the question, include it:
   the table as Markdown, a figure by its caption and its link. A client that
   reads images can open the file to describe the figure.
+- Each passage has its chunk_index, its section and its links (to the
+  figures, tables and other parts of the paper that it refers to, and to
+  the reference list). To read the text around a passage (chunk_index - 1
+  and + 1), or a linked figure or table, call get_chunks.
 - save_paper keeps an abstract-only paper. ingest_pdf makes a full-text paper.
 - A saved search is a standing query that a daily sweep runs; triage judges
   each new hit against its interest statement.
@@ -199,18 +206,24 @@ async def ingest_pdf(paper: str) -> dict[str, Any]:
     several minutes (the parse runs on the CPU while the GPU is busy).
 
     paper is a reference ('arxiv:2401.12345'; the paper is saved first, and
-    its PDF is downloaded) or the absolute path of a local PDF (the model
-    also extracts its title, authors and abstract). Returns the paper_id, the
-    chunk count and, under "pending", each step that failed. A pending step
-    does not stop the search: the chunks are stored.
+    its PDF is downloaded) or the absolute path of a local PDF. A local PDF
+    goes to its stored paper (found by its DOI or its title), else to a new
+    paper (from OpenAlex by its DOI, else the model also extracts its title,
+    authors and abstract). Returns the paper_id, the chunk count and, under
+    "pending", each step that failed. A pending step does not stop the
+    search: the chunks are stored.
     """
-    path = Path(paper).expanduser()
+    path = Path(paper).expanduser().resolve()
     if path.is_file():
         content = path.read_bytes()
         if not content.startswith(b"%PDF"):
             raise ValueError(f"{path} is not a PDF.")
-        paper_id = await db_save_paper(None, None, None, [], None, None)
-        filename, local = path.name, True
+        paper_id, _ = await paper_for_pdf(path)
+        stored = await db_get_paper(paper_id)
+        if stored["parse_mode"]:
+            raise ValueError(f"{path} is the PDF of paper {paper_id}, which already has full text.")
+        await queue_pdf(paper_id, str(path))  # clears an earlier failure of its download
+        filename, local = path.name, stored["title"] is None
     else:
         record = await _lookup(paper)
         if not record["pdf_url"]:
@@ -260,6 +273,27 @@ async def search_papers(query: str, facet: str = "concept", max_results: int = 5
     ]
 
 
+def _passage(r: dict[str, Any]) -> dict[str, Any]:
+    """A chunk as search_chunks and get_chunks return it."""
+    return {
+        "paper_id": r["paper_id"],
+        "title": r["title"],
+        "chunk_index": r["chunk_index"],
+        "section": r["section"],
+        "pages": str(r["page_start"]) if r["page_start"] == r["page_end"]
+        else f"{r['page_start']}-{r['page_end']}",
+        "content": r["content"],
+        "figures": [
+            {
+                "file": str(PAPERS_DIR / str(r["paper_id"]) / "images" / name),
+                "url": f"{DASHBOARD_URL}/papers/{r['paper_id']}/files/images/{name}",
+            }
+            for name in _FIGURE.findall(r["content"])
+        ],
+        "links": json.loads(r["links"]),
+    }
+
+
 @tool(read_only=True)
 async def search_chunks(
         query: str, paper_ids: Optional[list[int]] = None, max_results: int = 5,
@@ -268,28 +302,27 @@ async def search_chunks(
     limits it to these papers (from search_papers); none = all papers.
     Returns each passage with its paper and pages: quote the content exactly
     and cite the title and the page. A table in a passage keeps its rows.
-    "figures" lists each figure that the passage shows ("![](name)"), with
+    "figures" lists each figure that the passage shows (`![](name)`), with
     its file on the server and its link in the phdcode interface; its
-    caption is usually the next line of the content."""
+    caption is usually the next line of the content. "section" is the
+    headings above the passage; "links" are the chunks that it refers to
+    (kind figure, table, ref or citation): get_chunks reads them."""
     rows = await db_search_chunks(query, await _embed_one(query), paper_ids, max_results)
-    return [
-        {
-            "paper_id": r["paper_id"],
-            "title": r["title"],
-            "pages": str(r["page_start"]) if r["page_start"] == r["page_end"]
-            else f"{r['page_start']}-{r['page_end']}",
-            "content": r["content"],
-            "figures": [
-                {
-                    "file": str(PAPERS_DIR / str(r["paper_id"]) / "images" / name),
-                    "url": f"{DASHBOARD_URL}/papers/{r['paper_id']}/files/images/{name}",
-                }
-                for name in _FIGURE.findall(r["content"])
-            ],
-            "score": round(r["score"], 4),
-        }
-        for r in rows
-    ]
+    return [{**_passage(r), "score": round(r["score"], 4)} for r in rows]
+
+
+@tool(read_only=True)
+async def get_chunks(paper_id: int, chunk_indexes: list[int]) -> list[dict[str, Any]]:
+    """Reads chunks of one full-text paper by their chunk_index, in text
+    order, at most 10: the text before or after a passage (its chunk_index
+    - 1 or + 1), or the targets of its links (a figure, a table, a section,
+    an entry of the reference list)."""
+    if not 1 <= len(chunk_indexes) <= 10:
+        raise ValueError("Give 1 to 10 chunk indexes.")
+    rows = await db_get_chunks(paper_id, chunk_indexes)
+    if not rows:
+        raise ValueError(f"Paper {paper_id} has no chunks with these indexes.")
+    return [_passage(r) for r in rows]
 
 
 @tool

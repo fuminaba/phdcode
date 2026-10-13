@@ -1,0 +1,85 @@
+site_name: phdcode
+site_description: A literature RAG tool for arXiv, PubMed and OpenAlex, served to any agent harness over MCP.
+site_url: https://phdcode.fuminaba.com
+repo_url: https://github.com/fuminaba/phdcode
+repo_name: fuminaba/phdcode
+copyright: Copyright &copy; 2026 Fumi Inaba
+
+theme:
+  name: material
+  icon:
+    logo: material/book-open-page-variant
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - toc.follow
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+# STATUS.md holds the work in progress, not documentation; archive/ and
+# MODEL_BENCHMARK.md belong to the old general assistant (ADR-0015).
+exclude_docs: |
+  STATUS.md
+  MODEL_BENCHMARK.md
+  archive/
+
+plugins:
+  - search
+  # The reference pages are generated from the docstrings, which the agent
+  # also reads: a hand-written copy would drift from the code.
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: google
+            show_signature_annotations: true
+            separate_signature: true
+            members_order: source
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - How it works: how-it-works.md
+  - Using phdcode: using.md
+  - Configuration: configuration.md
+  - Glossary: GLOSSARY.md
+  - Reference:
+      - MCP tools: reference/tools.md
+      - The phdcode command: reference/cli.md
+  - Decisions:
+      - All decisions: adr/README.md
+      - "ADR 0006: tools and libraries": adr/0006-capability-split-tools-vs-libraries.md
+      - "ADR 0014: the phdcode repository": adr/0014-new-repository-phdcode.md
+      - "ADR 0015: a literature RAG tool": adr/0015-rescope-to-literature-rag-tool.md
+      - "ADR 0016: the MCP server": adr/0016-mcp-server-is-the-only-integration.md
+      - "ADR 0017: the GPU policy": adr/0017-gpu-main-slot.md

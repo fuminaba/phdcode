@@ -54,8 +54,9 @@
 <h2>Chunks <span class="muted">(what search_chunks finds and quotes)</span></h2>
 <div class="panel">
 {% for c in chunks %}
-<details><summary>Chunk {{ c.chunk_index }} · page {{ c.page_start }}{{ "–" ~ c.page_end if c.page_end != c.page_start }} · {{ c.content[:110] }}…</summary>
-<pre>{{ c.content }}</pre></details>
+<details id="c{{ c.chunk_index }}"><summary>Chunk {{ c.chunk_index }} · page {{ c.page_start }}{{ "–" ~ c.page_end if c.page_end != c.page_start }}{% if c.section %} · <span class="muted">{{ c.section }}</span>{% endif %} · {{ c.content[:90] }}…</summary>
+<pre>{{ c.content }}</pre>
+{% if c.links %}<div class="muted">Links: {% for l in c.links %}<a href="#c{{ l.rsplit(' ', 1)[1] }}">{{ l }}</a>{{ "; " if not loop.last }}{% endfor %}</div>{% endif %}</details>
 {% endfor %}
 </div>
 {% endif %}
