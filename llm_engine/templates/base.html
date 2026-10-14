@@ -38,6 +38,12 @@ table { border-collapse: collapse; width: 100%; background: var(--panel); }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 13px; color: var(--muted); font-weight: 600; }
 .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); white-space: nowrap; }
+.imp { --c: var(--muted); font: inherit; font-size: 12px; border-color: var(--c); color: var(--c); background: none; }
+.imp-interesting { --c: var(--muted); } .imp-recommended { --c: var(--accent); } .imp-crucial { --c: var(--warn); }
+.imp.on { background: var(--c); color: var(--panel); font-weight: 600; }
+button.imp { cursor: pointer; border-color: var(--line); color: var(--muted); }
+button.imp:hover { border-color: var(--c); color: var(--c); }
+button.imp.on { border-color: var(--c); color: var(--panel); }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
 pre, code { background: var(--code); border-radius: 4px; }
 pre { padding: 10px; overflow-x: auto; white-space: pre-wrap; }

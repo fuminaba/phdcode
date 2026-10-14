@@ -69,6 +69,10 @@ ingested by the user, and the hits that the user marked as relevant. Not the
 papers that the sweep saved. Triage reads the titles of the library.
 *Avoid:* profile.
 
+**Importance** — how much the user must know a paper, set by the user after
+reading it: *interesting*, *recommended* or *crucial*, weakest first; empty
+until set (ADR-0019). Not the triage probability, which a model gives.
+
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
 

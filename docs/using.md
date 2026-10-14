@@ -112,7 +112,7 @@ systemctl --user enable --now <repo>/llm_engine/systemd/phdcode-sweep.timer
 
 ## The interface
 
-A read-only web page on the server shows the papers, the PDF queue, the failed PDFs, the chunks with their sections and links, the figures and tables, the digests, the saved searches and the triaged hits. Its address is `DASHBOARD_URL` ([Configuration](configuration.md)). It runs as the user unit `llm_engine/systemd/phdcode-dashboard.service`, and it reads `.env` at start: restart it after a change to `.env`.
+A web page on the server shows the papers, the PDF queue, the failed PDFs, the chunks with their sections and links, the figures and tables, the digests, the saved searches and the triaged hits. It changes one thing: the importance of a paper (three buttons on the paper page, ADR-0019). Its address is `DASHBOARD_URL` ([Configuration](configuration.md)). It runs as the user unit `llm_engine/systemd/phdcode-dashboard.service`, and it reads `.env` at start: restart it after a change to `.env`.
 
 ## Backup
 

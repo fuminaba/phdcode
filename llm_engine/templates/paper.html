@@ -18,7 +18,25 @@
     <span class="tag">{{ p.chunks }} chunks</span>
     {% for k in p.keywords %}<span class="tag">{{ k }}</span> {% endfor %}
   </div>
+  <div id="importance" style="margin-top:8px">
+    <span class="muted">Importance</span>
+    {% for level in importance_levels %}<button type="button" class="tag imp imp-{{ level }}{{ ' on' if p.importance == level }}" value="{{ level }}" aria-pressed="{{ 'true' if p.importance == level else 'false' }}">{{ level }}</button> {% endfor %}
+    <span id="importance-error" class="bad"></span>
+  </div>
 </div>
+<script>
+// A click sets the level; a click on the level that is set clears it.
+document.querySelectorAll("#importance button").forEach(b => b.addEventListener("click", async () => {
+  const level = b.classList.contains("on") ? "" : b.value;
+  const r = await fetch(`/papers/{{ p.id }}/importance?level=${level}`, {method: "POST"});
+  document.getElementById("importance-error").textContent = r.ok ? "" : `not saved: HTTP ${r.status}`;
+  if (!r.ok) return;
+  document.querySelectorAll("#importance button").forEach(o => {
+    o.classList.toggle("on", o.value === level);
+    o.setAttribute("aria-pressed", o.value === level);
+  });
+}));
+</script>
 
 <h2>Abstract <span class="muted">(the concept facet: from the source, never generated)</span></h2>
 <div class="panel">{{ p.abstract or "(none)" }}</div>

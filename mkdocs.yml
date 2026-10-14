@@ -84,3 +84,4 @@ nav:
       - "ADR 0016: the MCP server": adr/0016-mcp-server-is-the-only-integration.md
       - "ADR 0017: the GPU policy": adr/0017-gpu-main-slot.md
       - "ADR 0018: triage by the library": adr/0018-triage-by-the-library.md
+      - "ADR 0019: the importance of a paper": adr/0019-importance-of-a-paper.md
