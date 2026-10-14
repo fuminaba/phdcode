@@ -282,7 +282,7 @@ async def digests(request: Request, day: str = ""):
     return _page(request, "digests.html", names=names, name=name, html=html)
 
 
-def _radar(values: list[float], width: int = 620, height: int = 300, rings: int = 4) -> dict[str, Any]:
+def _radar(values: list[float], width: int = 700, height: int = 300, rings: int = 4) -> dict[str, Any]:
     """The geometry of a radar chart in an SVG of width x height: for each
     axis its end, its value point and its label anchor; one polygon for each
     ring. The scale is 0 to the largest value."""
@@ -308,19 +308,27 @@ async def questions_page(request: Request):
     current = rows[0] if rows and rows[0]["asked_on"] == date.today() else None
     stats = questions.stats(rows)
     return _page(request, "questions.html", current=current, history=[q for q in rows if q is not current],
-                 titles=titles, stats=stats, radar=_radar([n for n, _ in stats["topics"].values()]),
+                 titles=titles, stats=stats,
+                 radars={name: _radar([n for n, _ in axes.values()]) for name, axes in stats["axes"].items()},
+                 axis_sets=questions.AXIS_SETS, question_types=questions.QUESTION_TYPES,
                  models=questions.models(), question_model=questions.QUESTION_MODEL,
                  grade_model=questions.GRADE_MODEL)
 
 
 @app.post("/questions/new")
 async def new_question(request: Request):
-    """{"model": "..."} or {}: a new question by that model (default QUESTION_MODEL)."""
-    model = (await request.json()).get("model")
-    if model is not None and model not in questions.models():
-        raise HTTPException(422, f"Unknown model {model!r}.")
+    """{"model", "axis_set", "axis", "question_type"}, each optional: a new
+    question by that model on that axis and type; a missing axis or type is
+    the weakest of axis_set (ADR-0021)."""
+    body = await request.json()
+    choices = {"model": questions.models(), "axis_set": questions.AXIS_SETS,
+               "axis": questions.AXIS_SETS.get(body.get("axis_set") or next(iter(questions.AXIS_SETS)), {}),
+               "question_type": questions.QUESTION_TYPES}
+    for field, allowed in choices.items():
+        if body.get(field) is not None and body[field] not in allowed:
+            raise HTTPException(422, f"Unknown {field} {body[field]!r}.")
     try:
-        return {"id": (await questions.ask(model))["id"]}
+        return {"id": (await questions.ask(**{field: body.get(field) for field in choices}))["id"]}
     except Exception as e:  # the model server is stopped, the library is empty, or the reply is not valid
         raise HTTPException(503, f"No question: {e}")
 

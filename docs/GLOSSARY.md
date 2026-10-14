@@ -78,6 +78,16 @@ crucial ones, that the user asks for on the page Questions and answers in a
 paragraph; a model grades it from 0 to 10, plus a bonus for correct
 citations. A question with no answer is *skipped* (ADR-0020).
 
+**Axis** — one competency or exam area that a daily question tests, with a
+description; an *axis set* is one radar of axes, such as "Field
+competencies" or "Exam areas" (ADR-0021). *Avoid:* topic, for this.
+
+**Question type** — the skill that a daily question tests: Explain,
+Compare, Critique, Design or Apply (ADR-0021).
+
+**Key points** — the 3 to 5 points that a strong answer to a daily
+question must contain; the grader scores mostly by them.
+
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
 

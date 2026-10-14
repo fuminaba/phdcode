@@ -68,34 +68,49 @@ def triage_prompt(library: str, title: str, abstract: str) -> str:
     )
 
 
-def question_prompt(papers: str, topics: tuple[str, ...]) -> str:
-    # The daily question (ADR-0020).
+def question_prompt(papers: str, focus: str, question_type: str, axis_sets: dict[str, list[str]]) -> str:
+    # The daily question (ADR-0020, ADR-0021).
+    lists = "\n".join(f"- {name}: {'; '.join(axes)}" for name, axes in axis_sets.items())
     return (
         "You examine a PhD student in medical image analysis with machine "
         "learning for oncology. Write one question that the student should be "
-        "able to answer in one paragraph after reading these papers. Ask about "
-        "an idea, a method, a design choice, a limitation or a comparison, not "
-        "about a number or a detail that only memory gives. Prefer a question "
-        "that needs more than one of the papers. Do not name the papers in the "
-        "question.\n\n"
+        "able to answer in one paragraph after reading these papers.\n\n"
+        f"The question tests this competency: {focus}.\n"
+        f"The kind of question: {question_type}.\n\n"
+        "Ask about an idea, a method, a design choice, a limitation or a "
+        "comparison, not about a number or a detail that only memory gives. "
+        "Prefer a question that needs more than one of the papers. Use the "
+        "papers that fit the competency; if none fits well, ask what the "
+        "competency means for the work of these papers. Do not name the "
+        "papers or their ids in the question; give in the question the facts "
+        "that the student needs.\n\n"
         "Then write the model answer: one paragraph that cites the papers by "
-        "their ids in brackets, for example [P12].\n\n"
-        "In topics, list the one or two topics of the question, copied "
-        f"exactly from this list: {'; '.join(topics)}.\n\n"
-        f"Papers:\n{papers}"
+        "their ids in brackets, for example [P12]. In key_points, list the 3 "
+        "to 5 points that a strong answer must contain, each in one "
+        "sentence.\n\n"
+        "In tags, give one flat list of labels: from each list below, the one "
+        "or two labels that the question tests, copied exactly:\n"
+        f"{lists}\n\n"
+        f"Papers:\n{papers}\n\n"
+        "Check before you reply: the question names no paper, no author and "
+        "no id such as P12; only the model answer and the key points cite ids."
     )
 
 
-def grade_prompt(question: str, model_answer: str, papers: str, library: str, answer: str) -> str:
-    # The grade of the daily question (ADR-0020).
+def grade_prompt(question: str, model_answer: str, key_points: list[str], papers: str, library: str,
+                 answer: str) -> str:
+    # The grade of the daily question (ADR-0020, ADR-0021).
+    points = "\n".join(f"- {p}" for p in key_points) or "(none)"
     return (
         "You grade the answer of a PhD student to an exam question.\n\n"
         f"Question: {question}\n\nModel answer: {model_answer}\n\n"
+        f"Key points of a strong answer:\n{points}\n\n"
         f"The papers of the question:\n{papers}\n\n"
         f"The student's library (id: title, first author, year):\n{library}\n\n"
         f"The student's answer: {answer}\n\n"
-        "Give a score from 0 to 10 for correctness, depth and clarity; a "
-        "different correct answer than the model answer is fine. List in "
+        "Give a score from 0 to 10 for correctness, depth and clarity, mostly "
+        "by the key points that the answer covers; a different correct answer "
+        "than the model answer is fine. List in "
         "cited_papers the id numbers (12 for P12) of the library papers that "
         "the answer cites, by title, author, year or id, where the paper "
         "supports the claim. Leave out a citation that is wrong. In feedback, "
