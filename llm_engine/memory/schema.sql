@@ -57,7 +57,7 @@ ALTER TABLE papers ADD COLUMN IF NOT EXISTS importance TEXT
 
 -- The daily question (ADR-0020): one row for each question that the user
 -- asks for; a question with no answer was skipped. asked_on is the local
--- date of the server. topics are from questions.TOPICS. score is 0 to 10;
+-- date of the server. topics are axis tags (ADR-0021). score is 0 to 10;
 -- bonus is one point for each library paper that the answer cites
 -- correctly (cited), at most 3. The model columns name the routes used.
 CREATE TABLE IF NOT EXISTS questions (
@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS questions (
     grade_model TEXT,
     graded_at TIMESTAMPTZ
 );
+-- ADR-0021: topics hold "<axis set>: <axis>" tags; the kind of question
+-- (questions.QUESTION_TYPES) and the key points of a strong answer.
+ALTER TABLE questions ADD COLUMN IF NOT EXISTS question_type TEXT;
+ALTER TABLE questions ADD COLUMN IF NOT EXISTS key_points TEXT[];
 
 CREATE INDEX IF NOT EXISTS papers_concept_embedding_idx
     ON papers USING hnsw (concept_embedding vector_cosine_ops);

@@ -1,6 +1,6 @@
 # ADR-0020: Daily questions, graded by a model, in the interface
 
-**Status:** Accepted — 2026-10-14
+**Status:** Accepted — 2026-10-14. Item 4 (Topics) superseded by [ADR-0021](0021-questions-steered-by-competency.md).
 
 ## Context
 

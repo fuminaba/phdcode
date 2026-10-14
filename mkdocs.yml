@@ -86,3 +86,4 @@ nav:
       - "ADR 0018: triage by the library": adr/0018-triage-by-the-library.md
       - "ADR 0019: the importance of a paper": adr/0019-importance-of-a-paper.md
       - "ADR 0020: daily questions": adr/0020-daily-question.md
+      - "ADR 0021: questions steered by competency": adr/0021-questions-steered-by-competency.md

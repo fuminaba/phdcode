@@ -12,7 +12,9 @@ TRIAGE_SCHEMA = {
 QUESTION_SCHEMA = {
     "question": (str, ...),
     "model_answer": (str, ...),
-    "topics": (list[str], ...),
+    "key_points": (list[str], ...),
+    # One flat list; a list for each axis set is accepted too.
+    "tags": (list[str] | dict[str, list[str]], ...),
 }
 
 GRADE_SCHEMA = {
