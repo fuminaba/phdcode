@@ -4,16 +4,18 @@
 
 phdcode-dashboard.service runs it on the Tailscale address only, so it has
 no login. It reads Postgres, the paper folders, the digests, the systemd
-units and the GPU state. It changes one thing: the importance of a paper
-(ADR-0019).
+units and the GPU state. It changes two things: the importance of a paper
+(ADR-0019) and the daily question with its answer (ADR-0020); the daily
+question calls the summary model.
 """
 import asyncio
 import fcntl
+import math
 import os
 import re
 import subprocess
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +23,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
+from markupsafe import Markup, escape
 
-from . import gpu
+from . import gpu, questions
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
@@ -64,7 +67,11 @@ def _when(value: Any) -> str:
 
 
 templates.env.filters["when"] = _when
+# [P12] in a model answer links to paper 12.
+templates.env.filters["cite_links"] = lambda text: Markup(
+    re.sub(r"\[P(\d+)\]", r'<a href="/papers/\1">[P\1]</a>', str(escape(text or ""))))
 templates.env.globals["importance_levels"] = IMPORTANCE
+templates.env.globals["zip"] = zip
 templates.env.globals["source_url"] = lambda source, source_id: (
     SOURCE_URL[source].format(source_id) if source in SOURCE_URL else None)
 
@@ -273,6 +280,67 @@ async def digests(request: Request, day: str = ""):
         raise HTTPException(404, f"No digest {name}.")
     html = _markdown.render((DIGEST_DIR / name).read_text()) if name else ""
     return _page(request, "digests.html", names=names, name=name, html=html)
+
+
+def _radar(values: list[float], width: int = 620, height: int = 300, rings: int = 4) -> dict[str, Any]:
+    """The geometry of a radar chart in an SVG of width x height: for each
+    axis its end, its value point and its label anchor; one polygon for each
+    ring. The scale is 0 to the largest value."""
+    cx, cy, r, n = width / 2, height / 2, height / 2 - 30, len(values)
+    top = max(values) or 1
+    unit = [(math.sin(2 * math.pi * i / n), -math.cos(2 * math.pi * i / n)) for i in range(n)]
+    return {
+        "width": width, "height": height, "cx": cx, "cy": cy, "top": top,
+        "rings": [" ".join(f"{cx + x * r * k / rings:.1f},{cy + y * r * k / rings:.1f}" for x, y in unit)
+                  for k in range(1, rings + 1)],
+        "axes": [{"x": cx + x * r, "y": cy + y * r, "px": cx + x * r * v / top, "py": cy + y * r * v / top,
+                  "lx": cx + x * (r + 12), "ly": cy + y * (r + 12) + 4,
+                  "anchor": "middle" if abs(x) < 0.3 else "start" if x > 0 else "end"}
+                 for (x, y), v in zip(unit, values)],
+    }
+
+
+@app.get("/questions")
+async def questions_page(request: Request):
+    rows = await _fetch("SELECT * FROM questions ORDER BY asked_on DESC, id DESC")
+    ids = {i for q in rows for i in (q["paper_ids"] or []) + (q["cited"] or [])}
+    titles = {r["id"]: r["title"] for r in await _fetch("SELECT id, title FROM papers WHERE id = ANY($1)", list(ids))}
+    current = rows[0] if rows and rows[0]["asked_on"] == date.today() else None
+    stats = questions.stats(rows)
+    return _page(request, "questions.html", current=current, history=[q for q in rows if q is not current],
+                 titles=titles, stats=stats, radar=_radar([n for n, _ in stats["topics"].values()]),
+                 models=questions.models(), question_model=questions.QUESTION_MODEL,
+                 grade_model=questions.GRADE_MODEL)
+
+
+@app.post("/questions/new")
+async def new_question(request: Request):
+    """{"model": "..."} or {}: a new question by that model (default QUESTION_MODEL)."""
+    model = (await request.json()).get("model")
+    if model is not None and model not in questions.models():
+        raise HTTPException(422, f"Unknown model {model!r}.")
+    try:
+        return {"id": (await questions.ask(model))["id"]}
+    except Exception as e:  # the model server is stopped, the library is empty, or the reply is not valid
+        raise HTTPException(503, f"No question: {e}")
+
+
+@app.post("/questions/{question_id}/answer")
+async def answer_question(question_id: int, request: Request):
+    """{"answer": "...", "model": "..."} saves and grades the answer; {"answer": null}
+    grades the saved one again. model is the grader (default GRADE_MODEL)."""
+    body = await request.json()
+    answer = body.get("answer")
+    if answer is not None and not answer.strip():
+        raise HTTPException(422, "The answer is empty.")
+    if body.get("model") is not None and body["model"] not in questions.models():
+        raise HTTPException(422, f"Unknown model {body['model']!r}.")
+    try:
+        return await questions.grade(question_id, answer, body.get("model"))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # the model server is stopped, or the reply is not valid
+        raise HTTPException(503, f"The answer is saved but not graded: {e}")
 
 
 @app.get("/how")

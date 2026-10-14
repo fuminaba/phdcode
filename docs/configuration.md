@@ -17,11 +17,13 @@ phdcode reads its settings from `.env` at the root of the repository. A variable
 
 | Variable | Default | What it sets |
 | --- | --- | --- |
-| `LLM_ROUTING` | none | The model routes: for each model name, its OpenAI-compatible endpoint and key. Set `'local': false` for a hosted model, so that the GPU rules do not count it as a GPU tenant. See `llm_engine/routes.py`. |
+| `LLM_ROUTING` | none | The model routes: for each model name, its OpenAI-compatible endpoint and key. Set `'local': false` for a hosted model, so that the GPU rules do not count it as a GPU tenant. `'provider': 'claude-code'` calls Claude through the Claude Code command (`claude -p`) on the account that is logged in there, with no endpoint and no API key, for example `'claude-haiku-5-5': {'provider': 'claude-code', 'local': false}`. See `llm_engine/routes.py`. |
 | `DEFAULT_SERVER_IP` | none | The base URL of the Ollama server for a model name that has no route, for example `http://localhost:11434` (phdcode adds `/v1`). |
 | `SUMMARY_MODEL` | `AGENT_BACKEND` | The model of the methods and results summaries, and of the metadata of a local PDF. |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | The Ollama embedding model. It runs on the CPU. |
 | `EMBEDDING_DIM` | `768` | The dimension of the embeddings. It must match `EMBEDDING_MODEL`. A change needs new embeddings for all papers. |
+| `QUESTION_MODEL` | `SUMMARY_MODEL` | The default model that writes the daily questions and their model answers (ADR-0020); the page Questions can choose another route of `LLM_ROUTING`, local or hosted. |
+| `GRADE_MODEL` | `QUESTION_MODEL` | The default model that grades the answers; the page can choose another. |
 | `TRIAGE_MODEL` | `SUMMARY_MODEL` | The LLM that judges each hit of the sweep: does the student with this library want it? If its server cannot answer (the GPU is cleared for training), the hits wait for the next sweep. |
 
 ## Chunks

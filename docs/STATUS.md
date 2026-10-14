@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-14 (after `053d3c5`)
+**Updated:** 2026-10-14 (after `29ba92b`)
 
 <!--
 CONVENTION -- read before editing.
@@ -39,6 +39,8 @@ The PDF queue of the import ended on 2026-10-12 at 16:26 PDT (3 h 28 min: the pa
 
 Built and tested, not committed: the chunk links (`phdcode rechunk`, the tool `get_chunks`) and `phdcode queue` (a local PDF to its stored paper, by its DOI, its arXiv ID or its title; else a new paper). `phdcode rechunk` of the 31 full-text papers took 33 minutes (2,171 chunks, 3,498 links), because the CPU embeddings are slower than 57 ms for each chunk.
 
+Built and tested with a fake model, not committed: the daily questions (ADR-0020: the model choice on the page, skip, topics, statistics) and the sort of the papers list. Tested once with Bonsai before the topics were added (question 36 s, grades 7 to 16 s, a fair split of a good and a vague answer); the topic tags of a real model are not yet tested. Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5 are routes in `.env` (`'provider': 'claude-code'`: `claude -p` on Fumi's Claude login, no API key); Haiku 5.5 tested: question 10 s, grades 7 to 10 s, valid topic tags; no paper is marked crucial yet, so the questions come from the whole library.
+
 Not done: tracking of authors, research groups and labs (Fumi's wish, 2026-10-12). Each paper stores all of its authors; no saved search follows an author yet. Groups and labs need a web search (Tavily, an API key) on top of the per-author searches.
 
 Not done: the `balanced` mode (Surya, marker 2), deferred by ADR-0017 item 9. `embed()` sends all chunks in one request (600 s timeout); add batches before a book or a thesis goes in.
@@ -76,7 +78,7 @@ Recorded here only where the ADRs do not cover it:
 ## Running where
 
 - **`phdcode-llm-proxy.socket`** (systemd user unit, enabled) listens on port 8080. It starts llama-server with Bonsai 2 27B at the first request; llama-server holds 14.4 GB of VRAM and `/tmp/gpu.lock` until 30 minutes after the last request. Check: `systemctl --user is-active phdcode-llm-proxy.socket phdcode-llm.service`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-llm`.
-- **`phdcode-dashboard.service`** (systemd user unit, enabled): the web interface at http://100.110.224.47:8620 (writes only `papers.importance`, ADR-0019), on the Tailscale address only. It reads `.env` at start: restart it after a change. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-dashboard`.
+- **`phdcode-dashboard.service`** (systemd user unit, enabled): the web interface at http://100.110.224.47:8620 (writes `papers.importance` and the table `questions`, ADR-0019 and ADR-0020), on the Tailscale address only. It reads `.env` at start: restart it after a change. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-dashboard`.
 - Postgres (`alira2-postgres-1`) runs in Docker, with the test database `phdcode_test`. Redis (`alira2-redis-1`) still runs, but nothing uses it.
 - The MCP server is registered in Claude Code (`claude mcp add phdcode`) and in dcode (`~/.deepagents/.mcp.json`, user level, outside the repo); each session starts its own `phdcode-mcp`.
 - The live database holds paper 1 (the nuclei local/global PDF, full text, 17 chunks) from the dcode RAG test on 2026-10-12.

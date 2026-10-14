@@ -8,7 +8,7 @@ These were produced in a single design session on 2026-09-22, after the system
 had grown to three loosely-related parts (ALiRA2, dcode, MedGemma) and the
 stated problem was *conceptual*: no one-sentence answer to "what lives where".
 ADR-0015 (2026-10-10) rescoped the project to a literature RAG tool and
-superseded most of them. Read 0006 and 0014 to 0019 for the current design.
+superseded most of them. Read 0006 and 0014 to 0020 for the current design.
 
 | # | Decision | Status |
 |---|----------|--------|
@@ -31,6 +31,7 @@ superseded most of them. Read 0006 and 0014 to 0019 for the current design.
 | [0017](0017-gpu-main-slot.md) | GPU policy: embeddings on the CPU, one tenant on the GPU | Accepted (revised 2026-10-11; `balanced` deferred) |
 | [0018](0018-triage-by-the-library.md) | Triage asks whether the student with this library wants the paper | Accepted |
 | [0019](0019-importance-of-a-paper.md) | The user sets the importance of a paper in the interface | Accepted |
+| [0020](0020-daily-question.md) | Daily questions, graded by a model, in the interface | Accepted |
 
 An ADR is valid while its premises are true. To re-open one, name the premise
 that changed, and supersede it in a new ADR. Edit only the status line of the

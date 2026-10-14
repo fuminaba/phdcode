@@ -1,6 +1,10 @@
 import json
 import logging
 import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -56,14 +60,44 @@ def generate(
         instruction = json_schema_instruction(json.dumps(reply_model.model_json_schema()))
         messages.insert(0, {"role": "system", "content": instruction})
 
-    options = {} if thinking else {
-        "temperature": 0, "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
-    response = client(route).chat.completions.create(model=route.name, messages=messages, **options)
-    # A reasoning model can put a <think> block before the answer.
-    content = (response.choices[0].message.content or "").split("</think>")[-1].strip()
+    if route.provider == "claude-code":
+        content = _claude(route, messages)
+    else:
+        options = {} if thinking else {
+            "temperature": 0, "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+        response = client(route).chat.completions.create(model=route.name, messages=messages, **options)
+        # A reasoning model can put a <think> block before the answer.
+        content = (response.choices[0].message.content or "").split("</think>")[-1].strip()
 
     if schema is None:
         return content
     # The JSON object, without a code fence or text around it.
     json_text = content[content.find("{"):content.rfind("}") + 1]
     return reply_model.model_validate_json(json_text).model_dump()
+
+
+
+# The Claude Code command. A systemd user unit has no ~/.local/bin in PATH.
+CLAUDE_BIN = shutil.which("claude") or str(Path.home() / ".local/bin/claude")
+
+
+def _claude(route, messages: list[dict[str, str]]) -> str:
+    """The text of one reply of Claude through the Claude Code command
+    (claude -p), on the account that is logged in there: no API key. No
+    tools, settings, hooks, plugins or MCP servers, and a neutral working
+    folder, so that no CLAUDE.md is read; the system message replaces the
+    system prompt. thinking=False does not apply: the current Claude models
+    always think."""
+    system = "\n\n".join(m["content"] for m in messages if m["role"] == "system") or "Answer the request."
+    prompt = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
+    run = subprocess.run(
+        [CLAUDE_BIN, "-p", "--model", route.name, "--tools", "", "--setting-sources", "", "--strict-mcp-config",
+         "--disable-slash-commands", "--no-session-persistence", "--system-prompt", system, "--output-format", "json"],
+        input=prompt, capture_output=True, text=True, cwd=tempfile.gettempdir(), timeout=600)
+    try:
+        reply = json.loads(run.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"claude -p failed (exit {run.returncode}): {(run.stderr or run.stdout)[:300]}")
+    if reply.get("is_error") or reply.get("stop_reason") == "refusal":
+        raise RuntimeError(f"{route.name} gave no answer: {reply.get('result') or reply.get('stop_reason')}")
+    return reply["result"].strip()

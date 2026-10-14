@@ -66,3 +66,38 @@ def triage_prompt(library: str, title: str, abstract: str) -> str:
         "would want to read it.\n\n"
         f"Title: {title}\n\nAbstract: {abstract or '(none)'}"
     )
+
+
+def question_prompt(papers: str, topics: tuple[str, ...]) -> str:
+    # The daily question (ADR-0020).
+    return (
+        "You examine a PhD student in medical image analysis with machine "
+        "learning for oncology. Write one question that the student should be "
+        "able to answer in one paragraph after reading these papers. Ask about "
+        "an idea, a method, a design choice, a limitation or a comparison, not "
+        "about a number or a detail that only memory gives. Prefer a question "
+        "that needs more than one of the papers. Do not name the papers in the "
+        "question.\n\n"
+        "Then write the model answer: one paragraph that cites the papers by "
+        "their ids in brackets, for example [P12].\n\n"
+        "In topics, list the one or two topics of the question, copied "
+        f"exactly from this list: {'; '.join(topics)}.\n\n"
+        f"Papers:\n{papers}"
+    )
+
+
+def grade_prompt(question: str, model_answer: str, papers: str, library: str, answer: str) -> str:
+    # The grade of the daily question (ADR-0020).
+    return (
+        "You grade the answer of a PhD student to an exam question.\n\n"
+        f"Question: {question}\n\nModel answer: {model_answer}\n\n"
+        f"The papers of the question:\n{papers}\n\n"
+        f"The student's library (id: title, first author, year):\n{library}\n\n"
+        f"The student's answer: {answer}\n\n"
+        "Give a score from 0 to 10 for correctness, depth and clarity; a "
+        "different correct answer than the model answer is fine. List in "
+        "cited_papers the id numbers (12 for P12) of the library papers that "
+        "the answer cites, by title, author, year or id, where the paper "
+        "supports the claim. Leave out a citation that is wrong. In feedback, "
+        "write 2 to 4 sentences: what was right, what was missing or wrong."
+    )

@@ -16,8 +16,13 @@ Configured by LLM_ROUTING in .env:
         'qwen3:14b'   : {'host_endpoint': 'http://host:11434/v1', 'api_key': '-'},
         'bonsai2-27b' : {'host_endpoint': 'http://host:8080/v1',  'api_key': '-'},
         'gemini-3.7-flash': {'host_endpoint': 'https://...', 'api_key': '...',
-                             'local': false}
+                             'local': false},
+        'claude-opus-5-5' : {'provider': 'claude-code', 'local': false}
     }"
+
+A route with 'provider': 'claude-code' calls Claude through the Claude Code
+command (claude -p) on the account that is logged in there, so it needs no
+endpoint and no API key (generation._claude).
 
 Single quotes and stray newlines are tolerated for backward compatibility
 with the existing file; strict JSON is tried first.
@@ -45,6 +50,8 @@ class Route:
     api_key: str
     # Does this model run on THIS machine's GPU?
     local: bool = True
+    # 'openai': an OpenAI-compatible endpoint; 'claude-code': the claude command.
+    provider: str = "openai"
 
 
 def _parse_routing(raw: Optional[str]) -> dict[str, Any]:
@@ -71,6 +78,8 @@ def _parse_routing(raw: Optional[str]) -> dict[str, Any]:
 
 
 _ROUTING = _parse_routing(os.getenv("LLM_ROUTING"))
+# The model names of LLM_ROUTING, for a choice in the interface.
+ROUTE_NAMES = tuple(_ROUTING)
 
 
 def resolve(model_name: str) -> Route:
@@ -90,9 +99,10 @@ def resolve(model_name: str) -> Route:
 
     return Route(
         name=model_name,
-        endpoint=entry["host_endpoint"],
+        endpoint=entry.get("host_endpoint", ""),
         api_key=entry.get("api_key", "-"),
         local=bool(entry.get("local", True)),
+        provider=entry.get("provider", "openai"),
     )
 
 

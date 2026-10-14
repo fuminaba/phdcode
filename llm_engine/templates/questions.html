@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Questions · phdcode{% endblock %}
+{% block head %}
+<style>
+:root { --cal0: var(--code); --cal1: #86b6ef; --cal2: #3987e5; --cal3: #184f95; }
+@media (prefers-color-scheme: dark) { :root { --cal1: #184f95; --cal2: #2a78d6; --cal3: #86b6ef; } }
+.score { font-size: 26px; font-weight: 600; }
+textarea { width: 100%; min-height: 160px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--text); font: inherit; }
+select { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--text); }
+button.go { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--panel); cursor: pointer; }
+button.alt { background: none; color: var(--accent); }
+button.go:disabled { opacity: .6; cursor: wait; }
+.models { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 10px; font-size: 14px; }
+.cal { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-flow: column; grid-auto-columns: 12px;
+  gap: 2px; overflow-x: auto; padding-bottom: 4px; }
+.cal div, .key i { border-radius: 2px; background: var(--cal0); }
+.cal .l1, .key .l1 { background: var(--cal1); } .cal .l2, .key .l2 { background: var(--cal2); }
+.cal .l3, .key .l3 { background: var(--cal3); }
+.key { display: flex; gap: 2px; align-items: center; font-size: 12px; margin-top: 6px; }
+.key i { display: inline-block; width: 12px; height: 12px; }
+.topics { display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: flex-start; }
+.topics svg { max-width: 100%; height: auto; }
+.topics svg text { fill: var(--muted); font-size: 12px; }
+.topics table { width: auto; }
+.topics td.n { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+{% endblock %}
+{% block main %}
+<h1>Questions</h1>
+<div class="cards" style="margin-bottom:14px">
+  <div class="card"><div class="n">{{ stats.points }}</div><div class="l">points</div></div>
+  <div class="card"><div class="n">{{ stats.answered }}</div><div class="l">answered</div></div>
+  <div class="card"><div class="n">{{ stats.today }}</div><div class="l">answered today</div></div>
+  <div class="card"><div class="n">{{ "%.1f"|format(stats.mean) if stats.mean is not none else "–" }}</div><div class="l">mean score (of 10)</div></div>
+  <div class="card"><div class="n">{{ stats.current }}</div><div class="l">day streak</div></div>
+  <div class="card"><div class="n">{{ stats.longest }}</div><div class="l">longest streak</div></div>
+</div>
+
+{% macro papers(ids) %}{% for i in ids %}<a href="/papers/{{ i }}">[P{{ i }}] {{ titles.get(i, "(deleted)") }}</a>{{ "; " if not loop.last }}{% endfor %}{% endmacro %}
+{% macro topic_tags(q) %}{% for t in q.topics %}<span class="tag">{{ t }}</span> {% endfor %}{% endmacro %}
+
+<h2>Question</h2>
+<div class="panel">
+  <div class="models">
+    <label>Question model <select id="question-model">{% for m in models %}<option{{ " selected" if m == question_model }}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Grader <select id="grade-model">{% for m in models %}<option{{ " selected" if m == grade_model }}>{{ m }}</option>{% endfor %}</select></label>
+  </div>
+{% if not current %}
+  <p>No question yet today. The question model picks papers from your library (mostly the ones you marked <span class="tag imp imp-crucial on">crucial</span>) and writes a question. It takes about a minute with a local model.</p>
+  <button class="go" id="new">Ask a question</button> <span class="msg bad"></span>
+{% else %}
+  <div>{{ topic_tags(current) }}</div>
+  <p><b>{{ current.question }}</b></p>
+  {% if not current.graded_at %}
+  <p class="muted">Answer in one paragraph. A bonus point for each paper of your library that you cite correctly (by title, author and year, or id), at most 3.</p>
+  <textarea id="answer">{{ current.answer or "" }}</textarea>
+  <p><button class="go" id="submit" data-id="{{ current.id }}">{{ "Grade again" if current.answer else "Submit" }}</button>
+     <button class="go alt" id="new">Skip: new question</button> <span class="msg bad"></span></p>
+  {% else %}
+  <p class="score">{{ current.score }}/10{% if current.bonus %} <span class="ok">+{{ current.bonus }}</span>{% endif %}</p>
+  <p>{{ current.feedback }}</p>
+  <details><summary>Your answer</summary><p>{{ current.answer }}</p></details>
+  <details open><summary>Model answer</summary><p>{{ current.model_answer|cite_links }}</p></details>
+  <div class="muted">Papers of the question: {{ papers(current.paper_ids) }}</div>
+  {% if current.cited %}<div class="muted">Your correct citations: {{ papers(current.cited) }}</div>{% endif %}
+  <div class="muted">Question by {{ current.question_model or "?" }} · graded by {{ current.grade_model or "?" }}</div>
+  <p><button class="go" id="new">Next question</button> <span class="msg bad"></span></p>
+  {% endif %}
+{% endif %}
+</div>
+
+<h2>Answers each day <span class="muted">(last {{ stats.calendar|length }} weeks)</span></h2>
+<div class="panel">
+  <div class="cal" role="img" aria-label="Answers each day: {{ stats.answered }} in all, {{ stats.today }} today">
+  {% for week in stats.calendar %}{% for day, n in week %}<div class="l{{ [n, 3]|min }}" title="{{ day }}: {{ n }} answered"></div>{% endfor %}{% endfor %}
+  </div>
+  <div class="key muted">Less <i></i><i class="l1"></i><i class="l2"></i><i class="l3"></i> More <span style="margin-left:8px">(1, 2, 3 or more answers; each column is one week, Monday at the top)</span></div>
+</div>
+
+<h2>Topics</h2>
+<div class="panel topics">
+  <svg viewBox="0 0 {{ radar.width }} {{ radar.height }}" width="{{ radar.width }}" role="img"
+       aria-label="Radar of the answered questions in each topic; the table beside it has the same numbers">
+    {% for ring in radar.rings %}<polygon points="{{ ring }}" fill="none" stroke="var(--line)"/>{% endfor %}
+    {% for a in radar.axes %}<line x1="{{ radar.cx }}" y1="{{ radar.cy }}" x2="{{ a.x }}" y2="{{ a.y }}" stroke="var(--line)"/>{% endfor %}
+    {% if stats.answered %}
+    <polygon points="{% for a in radar.axes %}{{ '%.1f,%.1f'|format(a.px, a.py) }} {% endfor %}"
+             fill="var(--accent)" fill-opacity=".18" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+    {% endif %}
+    {% for (topic, (n, mean)), a in zip(stats.topics.items(), radar.axes) %}
+    {% if stats.answered %}<circle cx="{{ a.px }}" cy="{{ a.py }}" r="4" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"><title>{{ topic }}: {{ n }} answered{{ ", mean score %.1f"|format(mean) if mean is not none }}</title></circle>{% endif %}
+    <text x="{{ a.lx }}" y="{{ a.ly }}" text-anchor="{{ a.anchor }}">{{ topic }}</text>
+    {% endfor %}
+    <text x="{{ radar.cx + 4 }}" y="{{ radar.axes[0].y + 12 }}" style="font-size:11px">{{ radar.top }}</text>
+  </svg>
+  <table>
+    <tr><th>Topic</th><th>Answered</th><th>Mean score</th></tr>
+    {% for topic, (n, mean) in stats.topics.items() %}
+    <tr><td>{{ topic }}</td><td class="n">{{ n }}</td><td class="n">{{ "%.1f"|format(mean) if mean is not none else "–" }}</td></tr>
+    {% endfor %}
+  </table>
+  {% if not stats.answered %}<p class="muted">No answers yet: the radar fills as you answer.</p>{% endif %}
+</div>
+
+{% if history %}
+<h2>Earlier questions</h2>
+{% for q in history %}
+<details class="panel"><summary>{{ q.asked_on }} · {% if q.graded_at %}<b>{{ q.score }}/10{{ " +" ~ q.bonus if q.bonus }}</b>{% elif q.answer %}<span class="warn">not graded</span>{% else %}<span class="muted">skipped</span>{% endif %} · {{ q.question[:110] }}{{ "…" if q.question|length > 110 }}</summary>
+  <div>{{ topic_tags(q) }}</div>
+  <p><b>{{ q.question }}</b></p>
+  {% if q.answer %}<p><b>Your answer:</b> {{ q.answer }}</p>{% endif %}
+  {% if q.feedback %}<p><b>Feedback:</b> {{ q.feedback }}</p>{% endif %}
+  <p><b>Model answer:</b> {{ q.model_answer|cite_links }}</p>
+  <div class="muted">Papers: {{ papers(q.paper_ids) }}</div>
+  <div class="muted">Question by {{ q.question_model or "?" }}{{ " · graded by " ~ q.grade_model if q.grade_model }}</div>
+</details>
+{% endfor %}
+{% endif %}
+
+<script>
+// The chosen models stay for the next visit, in this browser only.
+for (const id of ["question-model", "grade-model"]) {
+  const select = document.getElementById(id);
+  try {
+    const saved = localStorage.getItem(id);
+    if ([...select.options].some(o => o.value === saved)) select.value = saved;
+    select.addEventListener("change", () => { try { localStorage.setItem(id, select.value); } catch {} });
+  } catch {}
+}
+async function post(button, url, body) {
+  const label = button.textContent;
+  const msg = button.parentElement.querySelector(".msg");
+  document.querySelectorAll("button.go").forEach(b => b.disabled = true);
+  button.textContent = "The model is working…";
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (r.ok) return location.reload();
+  msg.textContent = (await r.json()).detail || `HTTP ${r.status}`;
+  document.querySelectorAll("button.go").forEach(b => b.disabled = false);
+  button.textContent = label;
+}
+document.getElementById("new")?.addEventListener("click", e =>
+  post(e.target, "/questions/new", {model: document.getElementById("question-model").value}));
+document.getElementById("submit")?.addEventListener("click", e => {
+  const text = document.getElementById("answer").value;
+  post(e.target, `/questions/${e.target.dataset.id}/answer`,
+       {answer: text.trim() ? text : null, model: document.getElementById("grade-model").value});
+});
+</script>
+{% endblock %}

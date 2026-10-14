@@ -8,3 +8,15 @@ PAPER_METADATA_SCHEMA = {
 TRIAGE_SCHEMA = {
     "probability": (float, ...),
 }
+
+QUESTION_SCHEMA = {
+    "question": (str, ...),
+    "model_answer": (str, ...),
+    "topics": (list[str], ...),
+}
+
+GRADE_SCHEMA = {
+    "score": (int, ...),
+    "cited_papers": (list[int], ...),
+    "feedback": (str, ...),
+}
