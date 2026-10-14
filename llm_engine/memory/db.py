@@ -113,7 +113,7 @@ async def get_paper(paper_id: int) -> Optional[dict[str, Any]]:
         row = await conn.fetchrow(
             "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
             "       p.doi, p.url, p.pdf_url, p.abstract, p.methods_summary, p.results_summary, "
-            "       p.parse_mode, "
+            "       p.parse_mode, p.importance, "
             "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks, "
             "       COALESCE(("
             "           SELECT array_agg(k.word ORDER BY k.word) FROM paper_keywords pk "

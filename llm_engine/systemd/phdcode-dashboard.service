@@ -1,5 +1,6 @@
-# The phdcode interface (llm_engine/dashboard.py): a read-only web page on
-# the Tailscale address only, so it needs no login.
+# The phdcode interface (llm_engine/dashboard.py): a web page on the
+# Tailscale address only, so it needs no login. It writes only the importance
+# of a paper (ADR-0019).
 #
 #   systemctl --user link ~/Desktop/dev/phdcode/llm_engine/systemd/phdcode-dashboard.service
 #   systemctl --user enable --now phdcode-dashboard.service
@@ -8,7 +9,7 @@
 # Tailscale address can come after this unit: the bind then fails, and the
 # unit tries again after 30 s.
 [Unit]
-Description=phdcode interface (read-only web page)
+Description=phdcode interface (web page)
 After=network-online.target
 
 [Service]

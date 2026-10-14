@@ -1,10 +1,11 @@
-"""The phdcode interface: a read-only web page of what phdcode holds and runs.
+"""The phdcode interface: a web page of what phdcode holds and runs.
 
     uvicorn llm_engine.dashboard:app --host 100.110.224.47 --port 8620
 
 phdcode-dashboard.service runs it on the Tailscale address only, so it has
 no login. It reads Postgres, the paper folders, the digests, the systemd
-units and the GPU state. It changes nothing.
+units and the GPU state. It changes one thing: the importance of a paper
+(ADR-0019).
 """
 import asyncio
 import fcntl
@@ -39,6 +40,8 @@ SOURCE_URL = {
 # The same page as the documentation site (mkdocs.yml), so that the two
 # cannot differ.
 HOW_PAGE = Path(__file__).resolve().parents[1] / "docs" / "how-it-works.md"
+# Weakest first, as in the CHECK of papers.importance (schema.sql).
+IMPORTANCE = ("interesting", "recommended", "crucial")
 _DIGEST_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
 # No raw HTML: the paper text comes from a PDF.
 _markdown = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -61,6 +64,7 @@ def _when(value: Any) -> str:
 
 
 templates.env.filters["when"] = _when
+templates.env.globals["importance_levels"] = IMPORTANCE
 templates.env.globals["source_url"] = lambda source, source_id: (
     SOURCE_URL[source].format(source_id) if source in SOURCE_URL else None)
 
@@ -145,7 +149,7 @@ async def _fetch(query: str, *args: Any) -> list[dict[str, Any]]:
 
 _PAPERS_SQL = (
     "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, p.pdf_url, "
-    "       p.parse_mode, p.created_at, p.pdf_source, p.pdf_error, "
+    "       p.parse_mode, p.importance, p.created_at, p.pdf_source, p.pdf_error, "
     "       (p.methods_summary IS NOT NULL AND p.results_summary IS NOT NULL) AS summarized, "
     "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks "
     "FROM papers p ORDER BY p.id DESC"
@@ -208,6 +212,17 @@ async def paper(request: Request, paper_id: int):
                  files=[(str(f), (folder / f).stat().st_size) for f in files],
                  images=[str(f) for f in files if f.parts[0] == "images"],
                  text_file=next((str(f) for f in files if f.name.endswith(".pdf.md")), None))
+
+
+@app.post("/papers/{paper_id}/importance")
+async def set_importance(paper_id: int, level: str = ""):
+    if level not in IMPORTANCE + ("",):
+        raise HTTPException(422, f"The importance must be one of {IMPORTANCE} or empty.")
+    rows = await _fetch("UPDATE papers SET importance = $2, updated_at = now() WHERE id = $1 RETURNING id",
+                        paper_id, level or None)
+    if not rows:
+        raise HTTPException(404, f"No paper has id {paper_id}.")
+    return {"id": paper_id, "importance": level or None}
 
 
 @app.get("/papers/{paper_id}/files/{path:path}")

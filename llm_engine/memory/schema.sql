@@ -50,6 +50,10 @@ ALTER TABLE papers ADD COLUMN IF NOT EXISTS pdf_error TEXT;
 -- 'sweep': the sweep saved the paper; NULL: the user added it. Triage reads
 -- the titles of the user's papers only (ADR-0018).
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS origin TEXT;
+-- How much the user must know a paper, set by the user after reading it,
+-- weakest first; NULL: not set (ADR-0019).
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS importance TEXT
+    CHECK (importance IN ('interesting', 'recommended', 'crucial'));
 
 CREATE INDEX IF NOT EXISTS papers_concept_embedding_idx
     ON papers USING hnsw (concept_embedding vector_cosine_ops);

@@ -2,29 +2,32 @@
 {% block title %}Papers · phdcode{% endblock %}
 {% block main %}
 <h1>Papers <span class="muted">({{ papers|length }})</span></h1>
-<input type="search" id="filter" placeholder="Filter by title, author, source or state">
+<input type="search" id="filter" placeholder="Filter by title, author, source, state or importance">
 <div class="scroll"><table id="papers">
-<tr><th>Id</th><th>Title</th><th>Authors</th><th>Date</th><th>Source</th><th>State</th><th>Chunks</th><th>Added</th></tr>
+<tr><th>Id</th><th>Title</th><th>Authors</th><th>Date</th><th>Source</th><th>State</th><th>Importance</th><th>Chunks</th><th>Added</th></tr>
 {% for p in papers %}
-<tr>
+<tr data-authors="{{ p.authors|join(' ') }}">
   <td>{{ p.id }}</td>
   <td><a href="/papers/{{ p.id }}">{{ p.title or "(no title)" }}</a>{% if p.venue %}<div class="muted">{{ p.venue }}</div>{% endif %}</td>
-  <td>{{ p.authors[0] if p.authors }}{{ " et al." if p.authors|length > 1 }}</td>
+  <td>{{ p.authors[0] if p.authors }}{% if p.authors|length > 1 %} <span class="muted" title="{{ p.authors|join(', ') }}">+{{ p.authors|length - 1 }}</span>{% endif %}</td>
   <td>{{ (p.published_date or "")[:10] }}</td>
   <td>{% set url = source_url(p.source, p.source_id) %}{% if url %}<a href="{{ url }}">{{ p.source }}:{{ p.source_id }}</a>{% else %}local PDF{% endif %}</td>
   <td><span class="tag {{ 'ok' if p.state == 'full text' else 'bad' if p.state == 'PDF failed' else 'warn' if 'pending' in p.state or 'queued' in p.state else '' }}">{{ p.state }}</span></td>
+  <td>{% if p.importance %}<span class="tag imp imp-{{ p.importance }} on">{{ p.importance }}</span>{% endif %}</td>
   <td>{{ p.chunks }}</td>
   <td>{{ p.created_at|when }}</td>
 </tr>
 {% else %}
-<tr><td colspan="8" class="muted">No papers yet.</td></tr>
+<tr><td colspan="9" class="muted">No papers yet.</td></tr>
 {% endfor %}
 </table></div>
 <script>
 document.getElementById("filter").addEventListener("input", e => {
   const q = e.target.value.toLowerCase();
   document.querySelectorAll("#papers tr:not(:first-child)").forEach(r => {
-    r.style.display = r.textContent.toLowerCase().includes(q) ? "" : "none";
+    // Every author, not only the first one that the row shows.
+    const text = (r.textContent + " " + (r.dataset.authors || "")).toLowerCase();
+    r.style.display = text.includes(q) ? "" : "none";
   });
 });
 </script>
