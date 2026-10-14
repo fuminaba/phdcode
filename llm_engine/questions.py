@@ -40,7 +40,7 @@ from typing import Any, Optional
 from .embeddings import embed
 from .generation import SUMMARY_MODEL, generate
 from .memory import get_pool
-from .prompts import grade_prompt, question_prompt
+from .prompts import chat_prompt, grade_prompt, question_prompt
 from .routes import ROUTE_NAMES
 from .schemas import GRADE_SCHEMA, QUESTION_SCHEMA
 
@@ -208,21 +208,56 @@ async def grade(question_id: int, answer: Optional[str] = None, model: Optional[
     reply = await asyncio.to_thread(generate, prompt, model, schema=GRADE_SCHEMA)
     known = {r["id"] for r in library}
     cited = sorted(set(reply["cited_papers"]) & known)
-    async with pool.acquire() as conn:
-        return dict(await conn.fetchrow(
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
             "UPDATE questions SET score = $2, bonus = $3, cited = $4, feedback = $5, grade_model = $6, "
             "graded_at = now() WHERE id = $1 RETURNING *",
             question_id, max(0, min(10, reply["score"])), min(MAX_BONUS, len(cited)), cited, reply["feedback"],
-            model))
+            model)
+        await conn.execute(
+            "INSERT INTO attempts (question_id, answer, answered_at, score, bonus, cited, feedback, grade_model, "
+            "graded_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", *[row[k] for k in (
+                "id", "answer", "answered_at", "score", "bonus", "cited", "feedback", "grade_model", "graded_at")])
+        return dict(row)
 
 
-def stats(rows: list[dict[str, Any]], weeks: int = 26, today: Optional[date] = None) -> dict[str, Any]:
-    """The statistics of the graded questions: points, the answers of each
-    day (local date of the answer), the current and the longest streak of
-    days with an answer, and the count and the mean score of each topic."""
+async def chat(question_id: int, message: str, model: Optional[str] = None) -> str:
+    """The tutor's reply to the student's message about a question
+    (ADR-0023). Before a grade the tutor clarifies but does not answer;
+    after it, the tutor discusses the model answer and the student's answer.
+    Both messages are saved only when the reply comes."""
+    model = _check_model(model, GRADE_MODEL)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        q = await conn.fetchrow("SELECT * FROM questions WHERE id = $1", question_id)
+        if q is None:
+            raise LookupError(f"No question has id {question_id}.")
+        papers = await conn.fetch("SELECT id, title, authors, published_date, abstract, methods_summary, "
+                                  "results_summary FROM papers WHERE id = ANY($1)", q["paper_ids"])
+        history = await conn.fetch("SELECT role, content FROM question_chat WHERE question_id = $1 ORDER BY id",
+                                   question_id)
+    graded = None if q["graded_at"] is None else (
+        f"Model answer: {q['model_answer']}\nKey points:\n" + "\n".join(f"- {k}" for k in q["key_points"] or [])
+        + f"\nStudent's answer: {q['answer']}\nScore: {q['score']}/10. Feedback: {q['feedback']}")
+    conversation = "\n\n".join(f"{h['role'].capitalize()}: {h['content']}" for h in history)
+    prompt = chat_prompt(q["question"], "\n\n".join(_paper_text(dict(p)) for p in papers), graded,
+                         conversation, message)
+    reply = await asyncio.to_thread(generate, prompt, model)
+    async with pool.acquire() as conn:
+        await conn.executemany("INSERT INTO question_chat (question_id, role, content, model) VALUES ($1, $2, $3, $4)",
+                               [(question_id, "student", message, None), (question_id, "tutor", reply, model)])
+    return reply
+
+
+def stats(rows: list[dict[str, Any]], attempts: list[dict[str, Any]] = (), weeks: int = 26,
+          today: Optional[date] = None) -> dict[str, Any]:
+    """The statistics of the questions: points and the radars by the latest
+    graded attempt of each question (rows); the attempts of each day (local
+    date of the answer), with the current and the longest streak of days
+    with an attempt, from all attempts (a redo is practice too)."""
     today = today or date.today()
     graded = [q for q in rows if q["graded_at"]]
-    per_day = Counter(q["answered_at"].astimezone().date() for q in graded)
+    per_day = Counter(a["answered_at"].astimezone().date() for a in attempts)
     longest = run = 0
     for day in sorted(per_day):
         run = run + 1 if day - timedelta(days=1) in per_day else 1
@@ -265,16 +300,20 @@ if __name__ == "__main__":
     weak = "Field competencies: Learning with weak labels"
     rows = [q(0, 8, [weak]), q(0, 6, [], "Compare"), q(1, 4, [weak, "Exam areas: ML foundations"]),
             q(5, 9, []), q(6, 9, []), q(7, 9, []), {"graded_at": None}]
-    s = stats(rows, today=t)
+    attempts = [r for r in rows if r["graded_at"]]
+    s = stats(rows, attempts, today=t)
     assert (s["points"], s["answered"], s["today"]) == (51, 6, 2), s
     assert (s["current"], s["longest"]) == (2, 3), s
+    # A redo on day 2 (of the question of day 1) joins the two runs; points stay by the latest attempt.
+    s = stats(rows, attempts + [q(2, 3, [])], today=t)
+    assert (s["points"], s["current"], s["longest"], s["today"]) == (51, 3, 3, 2), s
     assert s["axes"]["Field competencies"]["Learning with weak labels"] == (2, 6.0)
     assert s["axes"]["Exam areas"]["ML foundations"] == (1, 4.0)
     assert s["types"]["Explain"] == (5, 7.8) and s["types"]["Compare"] == (1, 6.0)
     assert s["calendar"][-1][-1] == (t, 2) and len(s["calendar"][-1]) == 3  # Mon to Wed
     assert all(len(w) == 7 for w in s["calendar"][:-1]) and s["calendar"][0][0][0].weekday() == 0
     assert stats([], today=t)["current"] == 0
-    assert stats([q(1, 5, [])], today=t)["current"] == 1  # an answer yesterday keeps the streak
+    assert stats([q(1, 5, [])], [q(1, 5, [])], today=t)["current"] == 1  # an answer yesterday keeps the streak
     # The weakest: an axis with no answers, never the answered one; a type never practised.
     for _ in range(20):
         axis, kind = _weakest(rows, "Field competencies")

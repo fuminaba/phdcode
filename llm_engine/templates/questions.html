@@ -29,14 +29,22 @@ button.go:disabled { opacity: .6; cursor: wait; }
 .types td.bar { width: 50%; min-width: 120px; }
 .types .bar i { display: block; height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); }
 [hidden] { display: none !important; }
+.chat { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }
+.chat .log { max-height: 420px; overflow-y: auto; }
+.chat .msg-student, .chat .msg-tutor { padding: 6px 10px; border-radius: 8px; margin: 6px 0; }
+.chat .msg-student { background: var(--code); margin-left: 15%; white-space: pre-wrap; }
+.chat .msg-tutor { border: 1px solid var(--line); margin-right: 15%; }
+.chat .msg-tutor p:first-child { margin-top: 0; } .chat .msg-tutor p:last-child { margin-bottom: 0; }
+.chat .send { display: flex; gap: 8px; align-items: flex-end; }
+.chat textarea { min-height: 60px; }
 </style>
 {% endblock %}
 {% block main %}
 <h1>Questions</h1>
 <div class="cards" style="margin-bottom:14px">
   <div class="card"><div class="n">{{ stats.points }}</div><div class="l">points</div></div>
-  <div class="card"><div class="n">{{ stats.answered }}</div><div class="l">answered</div></div>
-  <div class="card"><div class="n">{{ stats.today }}</div><div class="l">answered today</div></div>
+  <div class="card"><div class="n">{{ stats.answered }}</div><div class="l">questions answered</div></div>
+  <div class="card"><div class="n">{{ stats.today }}</div><div class="l">attempts today</div></div>
   <div class="card"><div class="n">{{ "%.1f"|format(stats.mean) if stats.mean is not none else "–" }}</div><div class="l">mean score (of 10)</div></div>
   <div class="card"><div class="n">{{ stats.current }}</div><div class="l">day streak</div></div>
   <div class="card"><div class="n">{{ stats.longest }}</div><div class="l">longest streak</div></div>
@@ -44,6 +52,10 @@ button.go:disabled { opacity: .6; cursor: wait; }
 
 {% macro papers(ids) %}{% for i in ids %}<a href="/papers/{{ i }}">[P{{ i }}] {{ titles.get(i, "(deleted)") }}</a>{{ "; " if not loop.last }}{% endfor %}{% endmacro %}
 {% macro topic_tags(q) %}{% if q.question_type %}<span class="tag ok">{{ q.question_type }}</span> {% endif %}{% for t in q.topics %}<span class="tag" data-set="{{ t.split(': ')[0] }}">{{ t.split(': ', 1)[-1] }}</span> {% endfor %}{% endmacro %}
+{% macro score_history(q) %}{% set tries = attempts.get(q.id, []) %}{% if tries|length > 1 %}<span title="Score history, oldest first">{% for a in tries %}{{ a.score }}{{ "+" ~ a.bonus if a.bonus }}{{ " → " if not loop.last }}{% endfor %}</span>{% elif q.graded_at %}{{ q.score }}/10{{ " +" ~ q.bonus if q.bonus }}{% endif %}{% endmacro %}
+{% macro earlier_attempts(q) %}{% set tries = attempts.get(q.id, [])[:-1] %}{% if tries %}<details><summary>Earlier attempts ({{ tries|length }})</summary>{% for a in tries %}
+  <p><b>{{ a.graded_at|when }} · {{ a.score }}/10{{ " +" ~ a.bonus if a.bonus }}</b> <span class="muted">graded by {{ a.grade_model or "?" }}</span><br>{{ a.answer }}</p>
+  {% if a.feedback %}<p class="muted">{{ a.feedback }}</p>{% endif %}{% endfor %}</details>{% endif %}{% endmacro %}
 {% macro key_points(q) %}{% if q.key_points %}<p><b>Key points of a strong answer:</b></p><ul>{% for k in q.key_points %}<li>{{ k|cite_links }}</li>{% endfor %}</ul>{% endif %}{% endmacro %}
 
 <h2>Question</h2>
@@ -64,6 +76,7 @@ button.go:disabled { opacity: .6; cursor: wait; }
   <p>No question yet today. The question model picks papers from your library (mostly the ones you marked <span class="tag imp imp-crucial on">crucial</span>) and writes a question. It takes about a minute with a local model.</p>
   <button class="go" id="new">Ask a question</button> <span class="msg bad"></span>
 {% else %}
+  {% if current.asked_on != today %}<p class="muted">A question of {{ current.asked_on }}. <a href="/questions">Back to today</a></p>{% endif %}
   <div>{{ topic_tags(current) }}</div>
   <p><b>{{ current.question }}</b></p>
   {% if not current.graded_at %}
@@ -72,15 +85,31 @@ button.go:disabled { opacity: .6; cursor: wait; }
   <p><button class="go" id="submit" data-id="{{ current.id }}">{{ "Grade again" if current.answer else "Submit" }}</button>
      <button class="go alt" id="new">Skip: new question</button> <span class="msg bad"></span></p>
   {% else %}
+  <div id="result">
   <p class="score">{{ current.score }}/10{% if current.bonus %} <span class="ok">+{{ current.bonus }}</span>{% endif %}</p>
+  {% if attempts.get(current.id, [])|length > 1 %}<p class="muted">Score history: {{ score_history(current) }}</p>{% endif %}
   <p>{{ current.feedback }}</p>
   <details><summary>Your answer</summary><p>{{ current.answer }}</p></details>
   <details open><summary>Model answer</summary><p>{{ current.model_answer|cite_links }}</p>{{ key_points(current) }}</details>
   <div class="muted">Papers of the question: {{ papers(current.paper_ids) }}</div>
   {% if current.cited %}<div class="muted">Your correct citations: {{ papers(current.cited) }}</div>{% endif %}
   <div class="muted">Question by {{ current.question_model or "?" }} · graded by {{ current.grade_model or "?" }}</div>
-  <p><button class="go" id="new">Next question</button> <span class="msg bad"></span></p>
+  {{ earlier_attempts(current) }}
+  <p><button class="go" id="redo">Answer again</button> <button class="go alt" id="new">Next question</button> <span class="msg bad"></span></p>
+  </div>
+  <div id="redo-form" hidden>
+    <p class="muted">Answer again; the model answer and the key points come back after the grade. Each attempt stays in the score history.</p>
+    <textarea id="answer"></textarea>
+    <p><button class="go" id="submit" data-id="{{ current.id }}">Submit</button> <button class="go alt" id="cancel">Cancel</button> <span class="msg bad"></span></p>
+  </div>
   {% endif %}
+  <div class="chat">
+    <b>Ask the model</b> <span class="muted">({{ "clarifies, but does not give the answer before you answer" if not current.graded_at else "discusses your answer and the model answer" }}; uses the grader model)</span>
+    <div class="log" id="chat-log">{% for m in chat %}{% if m.role == "student" %}<div class="msg-student">{{ m.content }}</div>{% else %}<div class="msg-tutor" title="{{ m.model or '' }}">{{ m.content|md_cites }}</div>{% endif %}{% endfor %}</div>
+    <div class="send"><textarea id="chat-input" placeholder="For example: what does the question mean by attributable? (Ctrl+Enter sends)"></textarea>
+      <button class="go" id="chat-send" data-id="{{ current.id }}">Send</button></div>
+    <span class="msg bad" id="chat-error"></span>
+  </div>
 {% endif %}
 </div>
 
@@ -135,7 +164,7 @@ button.go:disabled { opacity: .6; cursor: wait; }
 {% if history %}
 <h2>Earlier questions</h2>
 {% for q in history %}
-<details class="panel"><summary>{{ q.asked_on }} · {% if q.graded_at %}<b>{{ q.score }}/10{{ " +" ~ q.bonus if q.bonus }}</b>{% elif q.answer %}<span class="warn">not graded</span>{% else %}<span class="muted">skipped</span>{% endif %} · {{ q.question[:110] }}{{ "…" if q.question|length > 110 }}</summary>
+<details class="panel"><summary>{{ q.asked_on }} · {% if q.graded_at %}<b>{{ score_history(q) }}</b>{% elif q.answer %}<span class="warn">not graded</span>{% else %}<span class="muted">skipped</span>{% endif %} · {{ q.question[:110] }}{{ "…" if q.question|length > 110 }}</summary>
   <div>{{ topic_tags(q) }}</div>
   <p><b>{{ q.question }}</b></p>
   {% if q.answer %}<p><b>Your answer:</b> {{ q.answer }}</p>{% endif %}
@@ -144,6 +173,8 @@ button.go:disabled { opacity: .6; cursor: wait; }
   {{ key_points(q) }}
   <div class="muted">Papers: {{ papers(q.paper_ids) }}</div>
   <div class="muted">Question by {{ q.question_model or "?" }}{{ " · graded by " ~ q.grade_model if q.grade_model }}</div>
+  {{ earlier_attempts(q) }}
+  <p><a href="/questions?q={{ q.id }}">{{ "Answer again" if q.graded_at else "Answer" }}</a></p>
 </details>
 {% endfor %}
 {% endif %}
@@ -169,13 +200,45 @@ function showSet() {
 }
 axisSet.addEventListener("change", showSet);
 showSet();
-async function post(button, url, body) {
+document.getElementById("redo")?.addEventListener("click", () => {
+  document.getElementById("result").hidden = true;
+  document.getElementById("redo-form").hidden = false;
+  document.getElementById("answer").focus();
+});
+document.getElementById("cancel")?.addEventListener("click", () => {
+  document.getElementById("result").hidden = false;
+  document.getElementById("redo-form").hidden = true;
+});
+// The tutor chat adds each reply without a reload, so that an answer draft stays.
+document.getElementById("chat-send")?.addEventListener("click", async e => {
+  const input = document.getElementById("chat-input"), log = document.getElementById("chat-log");
+  const message = input.value.trim();
+  if (!message) return;
+  e.target.disabled = true;
+  e.target.textContent = "The model is working…";
+  const r = await fetch(`/questions/${e.target.dataset.id}/chat`, {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({message, model: document.getElementById("grade-model").value})});
+  e.target.disabled = false;
+  e.target.textContent = "Send";
+  if (!r.ok) { document.getElementById("chat-error").textContent = (await r.json()).detail || `HTTP ${r.status}`; return; }
+  document.getElementById("chat-error").textContent = "";
+  const student = document.createElement("div"), tutor = document.createElement("div");
+  student.className = "msg-student"; student.textContent = message;
+  tutor.className = "msg-tutor"; tutor.innerHTML = (await r.json()).html;
+  log.append(student, tutor);
+  log.scrollTop = log.scrollHeight;
+  input.value = "";
+});
+document.getElementById("chat-input")?.addEventListener("keydown", e => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) document.getElementById("chat-send").click();
+});
+async function post(button, url, body, next) {
   const label = button.textContent;
   const msg = button.parentElement.querySelector(".msg");
   document.querySelectorAll("button.go").forEach(b => b.disabled = true);
   button.textContent = "The model is working…";
   const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  if (r.ok) return location.reload();
+  if (r.ok) return next ? location.assign(next) : location.reload();
   msg.textContent = (await r.json()).detail || `HTTP ${r.status}`;
   document.querySelectorAll("button.go").forEach(b => b.disabled = false);
   button.textContent = label;
@@ -186,7 +249,7 @@ document.getElementById("new")?.addEventListener("click", e =>
     axis_set: axisSet.value,
     axis: document.querySelector(`label[data-set="${axisSet.value}"] select`).value || null,
     question_type: document.getElementById("question-type").value || null,
-  }));
+  }, "/questions"));
 document.getElementById("submit")?.addEventListener("click", e => {
   const text = document.getElementById("answer").value;
   post(e.target, `/questions/${e.target.dataset.id}/answer`,

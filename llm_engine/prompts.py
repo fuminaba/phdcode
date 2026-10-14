@@ -1,3 +1,6 @@
+from typing import Optional
+
+
 def json_schema_instruction(json_schema: str) -> str:
     return (
         "Reply with one JSON object (double quotes) that matches this JSON "
@@ -116,3 +119,27 @@ def grade_prompt(question: str, model_answer: str, key_points: list[str], papers
         "supports the claim. Leave out a citation that is wrong. In feedback, "
         "write 2 to 4 sentences: what was right, what was missing or wrong."
     )
+
+
+def chat_prompt(question: str, papers: str, graded: Optional[str], conversation: str, message: str) -> str:
+    # The tutor of a daily question (ADR-0023). graded: the model answer, the
+    # key points, the student's answer and the feedback; None before a grade.
+    rule = (
+        "The student has not answered yet. Clarify the question, its terms "
+        "and its background, and say which papers are useful, but do not give "
+        "the answer or its key points."
+        if graded is None else
+        f"The student has answered, and the answer was graded:\n{graded}\n\n"
+        "Discuss freely: explain the model answer, what the student's answer "
+        "missed or got wrong, and what a stronger answer needs."
+    )
+    return (
+        "You are the tutor of a PhD student in medical image analysis with "
+        "machine learning for oncology. The student works on this exam "
+        f"question:\n{question}\n\nPapers:\n{papers}\n\n{rule}\n\n"
+        f"Conversation so far:\n{conversation or '(none)'}\n\n"
+        f"Student: {message}\n\n"
+        "Reply to the last message of the student in at most 200 words. Cite "
+        "a paper by its id in brackets, for example [P12], when you use it."
+    )
+

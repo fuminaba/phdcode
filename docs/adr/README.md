@@ -8,7 +8,7 @@ These were produced in a single design session on 2026-09-22, after the system
 had grown to three loosely-related parts (ALiRA2, dcode, MedGemma) and the
 stated problem was *conceptual*: no one-sentence answer to "what lives where".
 ADR-0015 (2026-10-10) rescoped the project to a literature RAG tool and
-superseded most of them. Read 0006 and 0014 to 0021 for the current design.
+superseded most of them. Read 0006 and 0014 to 0023 for the current design.
 
 | # | Decision | Status |
 |---|----------|--------|
@@ -33,6 +33,8 @@ superseded most of them. Read 0006 and 0014 to 0021 for the current design.
 | [0019](0019-importance-of-a-paper.md) | The user sets the importance of a paper in the interface | Accepted |
 | [0020](0020-daily-question.md) | Daily questions, graded by a model, in the interface | Accepted (item 4 superseded) |
 | [0021](0021-questions-steered-by-competency.md) | The daily question is steered by a competency and a question type | Accepted |
+| [0022](0022-answer-again-with-score-history.md) | A daily question can be answered again, with a score history | Accepted |
+| [0023](0023-tutor-chat.md) | A tutor chat under the daily question | Accepted |
 
 An ADR is valid while its premises are true. To re-open one, name the premise
 that changed, and supersede it in a new ADR. Edit only the status line of the
