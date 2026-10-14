@@ -112,7 +112,7 @@ systemctl --user enable --now <repo>/llm_engine/systemd/phdcode-sweep.timer
 
 ## The interface
 
-A web page on the server shows the papers, the PDF queue, the failed PDFs, the chunks with their sections and links, the figures and tables, the digests, the saved searches and the triaged hits. It changes one thing: the importance of a paper (three buttons on the paper page, ADR-0019). Its address is `DASHBOARD_URL` ([Configuration](configuration.md)). It runs as the user unit `llm_engine/systemd/phdcode-dashboard.service`, and it reads `.env` at start: restart it after a change to `.env`.
+A web page on the server shows the papers, the PDF queue, the failed PDFs, the chunks with their sections and links, the figures and tables, the digests, the saved searches and the triaged hits. It changes two things: the importance of a paper (three buttons on the paper page, ADR-0019), and the daily questions on the page Questions (ADR-0020): a click makes a question from your library, mostly from the papers you marked crucial; you answer in a paragraph and a model grades it, with a bonus point for each correct citation. "Skip: new question" replaces a question that you do not want. Two lists choose the question model and the grader from `LLM_ROUTING`. The page also shows your points, your streak, a calendar of the answers of each day, and a radar of the topics that you answered. A local model starts llama-server, so it waits while the GPU is cleared. Its address is `DASHBOARD_URL` ([Configuration](configuration.md)). It runs as the user unit `llm_engine/systemd/phdcode-dashboard.service`, and it reads `.env` at start: restart it after a change to `.env`.
 
 ## Backup
 

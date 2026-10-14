@@ -3,17 +3,18 @@
 {% block main %}
 <h1>Papers <span class="muted">({{ papers|length }})</span></h1>
 <input type="search" id="filter" placeholder="Filter by title, author, source, state or importance">
+<div class="muted" style="margin:-4px 0 8px">Click a column heading to sort; click it again to reverse.</div>
 <div class="scroll"><table id="papers">
 <tr><th>Id</th><th>Title</th><th>Authors</th><th>Date</th><th>Source</th><th>State</th><th>Importance</th><th>Chunks</th><th>Added</th></tr>
 {% for p in papers %}
 <tr data-authors="{{ p.authors|join(' ') }}">
   <td>{{ p.id }}</td>
-  <td><a href="/papers/{{ p.id }}">{{ p.title or "(no title)" }}</a>{% if p.venue %}<div class="muted">{{ p.venue }}</div>{% endif %}</td>
+  <td data-key="{{ (p.title or '')|lower }}"><a href="/papers/{{ p.id }}">{{ p.title or "(no title)" }}</a>{% if p.venue %}<div class="muted">{{ p.venue }}</div>{% endif %}</td>
   <td>{{ p.authors[0] if p.authors }}{% if p.authors|length > 1 %} <span class="muted" title="{{ p.authors|join(', ') }}">+{{ p.authors|length - 1 }}</span>{% endif %}</td>
   <td>{{ (p.published_date or "")[:10] }}</td>
   <td>{% set url = source_url(p.source, p.source_id) %}{% if url %}<a href="{{ url }}">{{ p.source }}:{{ p.source_id }}</a>{% else %}local PDF{% endif %}</td>
   <td><span class="tag {{ 'ok' if p.state == 'full text' else 'bad' if p.state == 'PDF failed' else 'warn' if 'pending' in p.state or 'queued' in p.state else '' }}">{{ p.state }}</span></td>
-  <td>{% if p.importance %}<span class="tag imp imp-{{ p.importance }} on">{{ p.importance }}</span>{% endif %}</td>
+  <td data-key="{{ importance_levels.index(p.importance) + 1 if p.importance else 0 }}">{% if p.importance %}<span class="tag imp imp-{{ p.importance }} on">{{ p.importance }}</span>{% endif %}</td>
   <td>{{ p.chunks }}</td>
   <td>{{ p.created_at|when }}</td>
 </tr>
@@ -28,6 +29,29 @@ document.getElementById("filter").addEventListener("input", e => {
     // Every author, not only the first one that the row shows.
     const text = (r.textContent + " " + (r.dataset.authors || "")).toLowerCase();
     r.style.display = text.includes(q) ? "" : "none";
+  });
+});
+// A cell sorts by its data-key, else by its text; numbers sort as numbers.
+const table = document.getElementById("papers");
+const key = (row, i) => {
+  const c = row.cells[i];
+  const k = c.dataset.key ?? c.textContent.trim();
+  return k !== "" && !isNaN(k) ? Number(k) : k;
+};
+table.querySelectorAll("th").forEach((th, i) => {
+  th.style.cursor = "pointer";
+  th.addEventListener("click", () => {
+    const up = th.dataset.dir !== "up";
+    table.querySelectorAll("th").forEach(h => { delete h.dataset.dir; h.textContent = h.textContent.replace(/ [▲▼]$/, ""); });
+    th.dataset.dir = up ? "up" : "down";
+    th.textContent += up ? " ▲" : " ▼";
+    const rows = [...table.querySelectorAll("tr:not(:first-child)")];
+    rows.sort((a, b) => {
+      const x = key(a, i), y = key(b, i);
+      const order = typeof x === typeof y ? (x < y ? -1 : x > y ? 1 : 0) : typeof x === "number" ? -1 : 1;
+      return up ? order : -order;
+    });
+    table.tBodies[0].append(...rows);
   });
 });
 </script>

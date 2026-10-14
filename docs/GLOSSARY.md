@@ -73,6 +73,11 @@ papers that the sweep saved. Triage reads the titles of the library.
 reading it: *interesting*, *recommended* or *crucial*, weakest first; empty
 until set (ADR-0019). Not the triage probability, which a model gives.
 
+**Daily question** — a question from the papers of the library, mostly the
+crucial ones, that the user asks for on the page Questions and answers in a
+paragraph; a model grades it from 0 to 10, plus a bonus for correct
+citations. A question with no answer is *skipped* (ADR-0020).
+
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
 

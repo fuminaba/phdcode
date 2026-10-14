@@ -55,6 +55,29 @@ ALTER TABLE papers ADD COLUMN IF NOT EXISTS origin TEXT;
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS importance TEXT
     CHECK (importance IN ('interesting', 'recommended', 'crucial'));
 
+-- The daily question (ADR-0020): one row for each question that the user
+-- asks for; a question with no answer was skipped. asked_on is the local
+-- date of the server. topics are from questions.TOPICS. score is 0 to 10;
+-- bonus is one point for each library paper that the answer cites
+-- correctly (cited), at most 3. The model columns name the routes used.
+CREATE TABLE IF NOT EXISTS questions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    asked_on DATE NOT NULL,
+    paper_ids BIGINT[] NOT NULL,
+    topics TEXT[] NOT NULL DEFAULT '{{}}',
+    question TEXT NOT NULL,
+    model_answer TEXT NOT NULL,
+    question_model TEXT,
+    answer TEXT,
+    answered_at TIMESTAMPTZ,
+    score INT CHECK (score BETWEEN 0 AND 10),
+    bonus INT,
+    cited BIGINT[],
+    feedback TEXT,
+    grade_model TEXT,
+    graded_at TIMESTAMPTZ
+);
+
 CREATE INDEX IF NOT EXISTS papers_concept_embedding_idx
     ON papers USING hnsw (concept_embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS papers_methods_embedding_idx

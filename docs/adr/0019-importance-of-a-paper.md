@@ -1,6 +1,6 @@
 # ADR-0019: The user sets the importance of a paper in the interface
 
-**Status:** Accepted — 2026-10-14
+**Status:** Accepted — 2026-10-14. The interface also writes the daily question since [ADR-0020](0020-daily-question.md).
 
 ## Context
 
