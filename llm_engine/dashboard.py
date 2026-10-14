@@ -70,6 +70,10 @@ templates.env.filters["when"] = _when
 # [P12] in a model answer links to paper 12.
 templates.env.filters["cite_links"] = lambda text: Markup(
     re.sub(r"\[P(\d+)\]", r'<a href="/papers/\1">[P\1]</a>', str(escape(text or ""))))
+_CITE = re.compile(r"\[P(\d+)\]")
+# A tutor reply: Markdown without raw HTML, with [P12] linked to paper 12.
+templates.env.filters["md_cites"] = lambda text: Markup(_CITE.sub(r'<a href="/papers/\1">[P\1]</a>',
+                                                                  _markdown.render(text or "")))
 templates.env.globals["importance_levels"] = IMPORTANCE
 templates.env.globals["zip"] = zip
 templates.env.globals["source_url"] = lambda source, source_id: (
@@ -301,14 +305,24 @@ def _radar(values: list[float], width: int = 700, height: int = 300, rings: int 
 
 
 @app.get("/questions")
-async def questions_page(request: Request):
+async def questions_page(request: Request, q: int = 0):
+    """q: the question to show and answer again (ADR-0022); else today's latest."""
     rows = await _fetch("SELECT * FROM questions ORDER BY asked_on DESC, id DESC")
-    ids = {i for q in rows for i in (q["paper_ids"] or []) + (q["cited"] or [])}
+    attempts = await _fetch("SELECT * FROM attempts ORDER BY graded_at")
+    ids = {i for r in rows for i in (r["paper_ids"] or []) + (r["cited"] or [])}
     titles = {r["id"]: r["title"] for r in await _fetch("SELECT id, title FROM papers WHERE id = ANY($1)", list(ids))}
-    current = rows[0] if rows and rows[0]["asked_on"] == date.today() else None
-    stats = questions.stats(rows)
-    return _page(request, "questions.html", current=current, history=[q for q in rows if q is not current],
-                 titles=titles, stats=stats,
+    current = next((r for r in rows if r["id"] == q), None) if q else (
+        rows[0] if rows and rows[0]["asked_on"] == date.today() else None)
+    if q and current is None:
+        raise HTTPException(404, f"No question has id {q}.")
+    by_question: dict[int, list[dict[str, Any]]] = {}
+    for a in attempts:
+        by_question.setdefault(a["question_id"], []).append(a)
+    stats = questions.stats(rows, attempts)
+    chat = await _fetch("SELECT role, content, model FROM question_chat WHERE question_id = $1 ORDER BY id",
+                        current["id"]) if current else []
+    return _page(request, "questions.html", current=current, history=[r for r in rows if r is not current],
+                 attempts=by_question, titles=titles, stats=stats, today=date.today(), chat=chat,
                  radars={name: _radar([n for n, _ in axes.values()]) for name, axes in stats["axes"].items()},
                  axis_sets=questions.AXIS_SETS, question_types=questions.QUESTION_TYPES,
                  models=questions.models(), question_model=questions.QUESTION_MODEL,
@@ -349,6 +363,25 @@ async def answer_question(question_id: int, request: Request):
         raise HTTPException(404, str(e))
     except Exception as e:  # the model server is stopped, or the reply is not valid
         raise HTTPException(503, f"The answer is saved but not graded: {e}")
+
+
+@app.post("/questions/{question_id}/chat")
+async def chat_question(question_id: int, request: Request):
+    """{"message": "...", "model": "..."}: the tutor's reply (ADR-0023), as
+    HTML, so that the page adds it without a reload (an answer draft stays)."""
+    body = await request.json()
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(422, "The message is empty.")
+    if body.get("model") is not None and body["model"] not in questions.models():
+        raise HTTPException(422, f"Unknown model {body['model']!r}.")
+    try:
+        reply = await questions.chat(question_id, message, body.get("model"))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # the model server is stopped
+        raise HTTPException(503, f"No reply: {e}")
+    return {"html": str(templates.env.filters["md_cites"](reply))}
 
 
 @app.get("/how")

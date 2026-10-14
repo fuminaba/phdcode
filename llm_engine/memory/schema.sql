@@ -82,6 +82,38 @@ CREATE TABLE IF NOT EXISTS questions (
 ALTER TABLE questions ADD COLUMN IF NOT EXISTS question_type TEXT;
 ALTER TABLE questions ADD COLUMN IF NOT EXISTS key_points TEXT[];
 
+-- Each graded answer to a daily question (ADR-0022): the score history of a
+-- question when the user answers it again. The answer columns of questions
+-- hold the latest attempt, which the points and the radars use.
+CREATE TABLE IF NOT EXISTS attempts (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    question_id BIGINT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+    answer TEXT NOT NULL,
+    answered_at TIMESTAMPTZ NOT NULL,
+    score INT NOT NULL CHECK (score BETWEEN 0 AND 10),
+    bonus INT NOT NULL,
+    cited BIGINT[],
+    feedback TEXT,
+    grade_model TEXT,
+    graded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS attempts_question_idx ON attempts (question_id);
+
+-- The conversation about a daily question with the tutor model (ADR-0023).
+CREATE TABLE IF NOT EXISTS question_chat (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    question_id BIGINT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('student', 'tutor')),
+    content TEXT NOT NULL,
+    model TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS question_chat_question_idx ON question_chat (question_id);
+-- The answers graded before this table: one attempt each.
+INSERT INTO attempts (question_id, answer, answered_at, score, bonus, cited, feedback, grade_model, graded_at)
+SELECT id, answer, answered_at, score, bonus, cited, feedback, grade_model, graded_at FROM questions q
+WHERE graded_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.question_id = q.id);
+
 CREATE INDEX IF NOT EXISTS papers_concept_embedding_idx
     ON papers USING hnsw (concept_embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS papers_methods_embedding_idx

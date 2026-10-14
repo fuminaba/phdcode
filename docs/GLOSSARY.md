@@ -78,6 +78,9 @@ crucial ones, that the user asks for on the page Questions and answers in a
 paragraph; a model grades it from 0 to 10, plus a bonus for correct
 citations. A question with no answer is *skipped* (ADR-0020).
 
+**Attempt** — one graded answer to a daily question. A question can have
+several; the latest counts for the points and the radars (ADR-0022).
+
 **Axis** — one competency or exam area that a daily question tests, with a
 description; an *axis set* is one radar of axes, such as "Field
 competencies" or "Exam areas" (ADR-0021). *Avoid:* topic, for this.
@@ -87,6 +90,10 @@ Compare, Critique, Design or Apply (ADR-0021).
 
 **Key points** — the 3 to 5 points that a strong answer to a daily
 question must contain; the grader scores mostly by them.
+
+**Tutor** — the model of the chat under a daily question. Before a grade it
+clarifies but does not answer; after it, it discusses the answer
+(ADR-0023).
 
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
