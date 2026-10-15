@@ -1,11 +1,72 @@
 {% extends "base.html" %}
 {% block title %}Digests · phdcode{% endblock %}
+{% block head %}
+<style>
+details.day > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+details.day > summary::-webkit-details-marker { display: none; }
+details.day > summary::before { content: "▸"; color: var(--muted); width: 1em; }
+details.day[open] > summary::before { content: "▾"; }
+details.day > summary .date { font-size: 17px; font-weight: 600; }
+details.day { padding: 12px 16px; }
+details.day[open] > summary { margin-bottom: 8px; }
+.search { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+.search-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.search-head details { font-size: 13px; }
+.search-head details summary { color: var(--muted); }
+.hits { list-style: none; margin: 6px 0 0; padding: 0; }
+.hits li { padding: 6px 0; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+.hits li + li { border-top: 1px dashed var(--line); }
+.hits .meta { font-size: 13px; color: var(--muted); grid-column: 1; }
+.hits .side { grid-row: 1 / span 2; grid-column: 2; text-align: right; white-space: nowrap; font-size: 13px; }
+.quiet { border-top: 1px solid var(--line); padding-top: 8px; font-size: 14px; }
+</style>
+{% endblock %}
 {% block main %}
 <h1>Digests</h1>
-{% if names %}
-<p>{% for n in names %}<a href="/digests?day={{ n }}"{% if n == name %} style="font-weight:600"{% endif %}>{{ n[:-3] }}</a>{{ " · " if not loop.last }}{% endfor %}</p>
-<div class="panel md">{{ html|safe }}</div>
-{% else %}
-<div class="panel muted">No digests yet. The daily sweep writes one Markdown file each day, when a saved search exists and the sweep timer is installed.</div>
+{% if not days %}
+<div class="panel muted">No digests yet. The daily sweep writes one each day, when a saved search exists and the sweep timer is installed.</div>
 {% endif %}
+{% for d in days %}
+<details class="panel day" id="{{ d.date }}"{{ " open" if d.name == open_day }}>
+  <summary>
+    <span class="date">{{ d.date.strftime("%A %d %B %Y") }}</span>
+    <span><b>{{ d.relevant }}</b> relevant {{ "paper" if d.relevant == 1 else "papers" }}</span>
+    <span class="muted">from {{ d.hits }} hits in {{ d.searches }} saved searches</span>
+    {% if d.notes %}<span class="tag warn">{{ d.notes }} {{ "note" if d.notes == 1 else "notes" }}</span>{% endif %}
+  </summary>
+  {% for sweep in d.sweeps %}
+  <div class="muted" style="font-size:13px">Swept at {{ sweep.time[11:] }}{% for n in sweep.notes %} · {{ n }}{% endfor %}</div>
+  {% for s in sweep.searches if s.hits or s.notes %}
+  <div class="search">
+    <div class="search-head">
+      <b title="{{ s.interest }}">{{ s.name }}</b>
+      <span class="tag">{{ source_names.get(s.source, s.source) }}</span>
+      <span class="muted">{{ s.hits|length }} relevant{% if s.counts %} of {{ s.counts.new }} new {{ "hit" if s.counts.new == 1 else "hits" }}{% endif %}</span>
+      <details><summary>the search</summary>
+        <div>{{ s.interest }}</div>
+        <div><code>{{ s.query }}</code></div>
+        <div class="muted">Saved search <a href="/interests#s{{ s.id }}">{{ s.id }}</a>, threshold {{ "%.2f"|format(s.threshold) if s.threshold is not none }}</div>
+      </details>
+    </div>
+    {% for n in s.notes %}<div class="warn" style="font-size:13px">{{ n }}</div>{% endfor %}
+    <ul class="hits">
+    {% for h in s.hits %}{% set saved = papers.get(h.ref) %}
+      <li>
+        <span>{% if saved %}<a href="/papers/{{ saved.id }}">{{ h.title }}</a>{% else %}<a href="{{ h.url }}">{{ h.title }}</a>{% endif %}
+          {% if saved and saved.importance %}<span class="tag imp imp-{{ saved.importance }} on">{{ saved.importance }}</span>{% endif %}</span>
+        <span class="side"><span class="tag" title="Triage: the probability that you want to read it">{{ "%.0f"|format(100 * h.p) }}%</span><br>
+          <a href="{{ h.url }}" class="muted">{{ source_names.get(h.ref.split(":")[0], "source") }} ↗</a></span>
+        <span class="meta">{{ h.authors }}{{ " · " ~ h.date if h.date }}</span>
+      </li>
+    {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+  {% set quiet = sweep.searches|rejectattr("hits")|rejectattr("notes")|list %}
+  {% if quiet %}
+  <div class="quiet muted">No relevant hits: {% for s in quiet %}<span title="{{ s.interest }}">{{ s.name }}</span> ({{ s.counts.new if s.counts else 0 }} new){{ "; " if not loop.last }}{% endfor %}</div>
+  {% endif %}
+  {% endfor %}
+</details>
+{% endfor %}
 {% endblock %}
