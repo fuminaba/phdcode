@@ -22,6 +22,7 @@ import asyncio
 import logging
 import math
 import os
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -59,10 +60,48 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)) or 1.0)
 
 
+# parse_digest() reads the lines that _hit_line() and sweep_one() write:
+# change the writer and the parser together (the self-check runs both).
 def _hit_line(hit: dict[str, Any], probability: float) -> str:
     authors = ", ".join(hit["authors"][:3]) + (" et al." if len(hit["authors"]) > 3 else "")
     return (f"- [{hit['title']}]({hit['hyperlink']}): {authors}, {(hit['published_date'] or '')[:10]}. "
             f"`{hit['ref']}`, p = {probability:.2f}")
+
+
+_HIT = re.compile(r"- \[(?P<title>.*)\]\((?P<url>[^)\s]*)\): (?P<authors>.*), (?P<date>[\d-]*)\. "
+                  r"`(?P<ref>[^`]+)`, p = (?P<p>[\d.]+)$")
+_STATS = re.compile(r"Hits (?:since \S+|in the last \d+ days): (?P<hits>\d+); new: (?P<new>\d+); "
+                    r"relevant: (?P<relevant>\d+)\.$")
+_SEARCH = re.compile(r"Saved search (?P<id>\d+), threshold (?P<threshold>[\d.]+)\. Interest: (?P<interest>.*)$")
+
+
+def parse_digest(text: str) -> list[dict[str, Any]]:
+    """The sweeps of a digest file, as written by sweep() and sweep_one(), for
+    the interface: for each sweep its time and its saved searches, each with
+    its query, interest, relevant hits and counts. A line of another form
+    (a failed search, hits that wait) is kept in the notes of its search."""
+    sweeps: list[dict[str, Any]] = []
+    search: dict[str, Any] = {}
+    for line in text.splitlines():
+        if line.startswith("# Sweep "):
+            sweeps.append({"time": line.removeprefix("# Sweep "), "searches": [], "notes": []})
+        elif line.startswith("## ") and sweeps:
+            source, _, query = line[3:].partition(": ")
+            search = {"source": source, "query": query, "hits": [], "notes": [], "counts": None}
+            sweeps[-1]["searches"].append(search)
+        elif not line.strip() or line == "No new relevant hits." or not sweeps:
+            continue
+        elif not search:
+            sweeps[-1]["notes"].append(line)
+        elif m := _HIT.match(line):
+            search["hits"].append({**m.groupdict(), "p": float(m["p"])})
+        elif m := _STATS.match(line):
+            search["counts"] = {k: int(v) for k, v in m.groupdict().items()}
+        elif m := _SEARCH.match(line):
+            search.update(id=int(m["id"]), threshold=float(m["threshold"]), interest=m["interest"])
+        else:
+            search["notes"].append(line)
+    return sweeps
 
 
 async def sweep_one(saved: dict[str, Any]) -> list[str]:
@@ -143,4 +182,22 @@ async def sweep() -> Path:
 if __name__ == "__main__":
     assert abs(_cosine([1, 0], [1, 0]) - 1) < 1e-9 and abs(_cosine([1, 0], [0, 1])) < 1e-9
     assert _cosine([0, 0], [1, 0]) == 0
+    # The parser reads what the writer writes.
+    hit = {"title": "A [study] of nuclei", "hyperlink": "https://x.org/1", "authors": ["A B", "C D", "E F", "G H"],
+           "published_date": "2026-10-10", "ref": "pubmed:1"}
+    text = "\n".join(["# Sweep 2026-10-12 19:08", "", "## pubmed: a AND (b OR c)", "",
+                      "Saved search 2, threshold 0.30. Interest: Deep learning on prostate slides (biopsies).", "",
+                      _hit_line(hit, 0.834), "", "Hits since 2026-10-05: 7; new: 7; relevant: 1.",
+                      "Hits that wait for triage: 2 (ConnectionError: down).", "",
+                      "## arxiv: d", "", "Saved search 9, threshold 0.30. Interest: e", "", "No new relevant hits.",
+                      "", "Hits in the last 7 days: 0; new: 0; relevant: 0.", ""])
+    [s] = parse_digest(text)
+    a, b = s["searches"]
+    assert s["time"] == "2026-10-12 19:08" and (a["id"], a["threshold"], b["id"]) == (2, 0.3, 9), s
+    assert a["hits"] == [{"title": "A [study] of nuclei", "url": "https://x.org/1", "authors": "A B, C D, E F et al.",
+                          "date": "2026-10-10", "ref": "pubmed:1", "p": 0.83}], a["hits"]
+    assert a["counts"] == {"hits": 7, "new": 7, "relevant": 1} and a["notes"] == [
+        "Hits that wait for triage: 2 (ConnectionError: down)."], a
+    assert b["hits"] == [] and b["counts"]["hits"] == 0 and b["query"] == "d"
     print("sweep self-check: ok")
+

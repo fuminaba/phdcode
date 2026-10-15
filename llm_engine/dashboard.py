@@ -32,7 +32,7 @@ from .generation import SUMMARY_MODEL
 from .memory import close_pool, get_paper, get_pool, pending_papers
 from .memory.document_index import CHUNK_OVERLAP, CHUNK_SIZE, MAP_CHUNK_SIZE
 from .sources import OPENALEX_API_KEY, PUBMED_API_KEY
-from .sweep import DIGEST_DIR, LOOKBACK_DAYS, MAX_HITS
+from .sweep import DIGEST_DIR, LOOKBACK_DAYS, MAX_HITS, parse_digest
 from .triage import TRIAGE_MODEL
 
 SOURCE_URL = {
@@ -276,14 +276,34 @@ async def interests(request: Request):
     return _page(request, "interests.html", searches=searches, hits=by_search)
 
 
+def _search_name(interest: str) -> str:
+    """A short name of a saved search: its interest statement up to the
+    first example or parenthesis."""
+    name = re.split(r" \(|, for example|, such as|, especially|, including", interest or "", maxsplit=1)[0]
+    return name.rstrip(".") or "(no interest)"
+
+
 @app.get("/digests")
 async def digests(request: Request, day: str = ""):
-    names = [p.name for p in sorted(DIGEST_DIR.glob("*.md"), reverse=True)]
-    name = day or (names[0] if names else "")
-    if name and (not _DIGEST_NAME.fullmatch(name) or name not in names):
-        raise HTTPException(404, f"No digest {name}.")
-    html = _markdown.render((DIGEST_DIR / name).read_text()) if name else ""
-    return _page(request, "digests.html", names=names, name=name, html=html)
+    """Each digest file as a card of its day; day opens that card (default: the newest)."""
+    files = sorted(DIGEST_DIR.glob("*.md"), reverse=True)
+    if day and (not _DIGEST_NAME.fullmatch(day) or day not in {f.name for f in files}):
+        raise HTTPException(404, f"No digest {day}.")
+    days = []
+    for f in files:
+        sweeps = parse_digest(f.read_text())
+        searches = [s for sweep in sweeps for s in sweep["searches"]]
+        for s in searches:
+            s["name"] = _search_name(s.get("interest", ""))
+        days.append({"name": f.name, "date": date.fromisoformat(f.stem), "sweeps": sweeps,
+                     "relevant": sum(len(s["hits"]) for s in searches),
+                     "hits": sum((s["counts"] or {}).get("hits", 0) for s in searches),
+                     "searches": len(searches), "notes": sum(len(s["notes"]) for s in searches)})
+    refs = list({h["ref"] for d in days for sweep in d["sweeps"] for s in sweep["searches"] for h in s["hits"]})
+    papers = {f"{r['source']}:{r['source_id']}": r for r in await _fetch(
+        "SELECT id, source, source_id, importance FROM papers WHERE source || ':' || source_id = ANY($1)", refs)}
+    return _page(request, "digests.html", days=days, papers=papers, open_day=day or (files[0].name if files else ""),
+                 source_names={"arxiv": "arXiv", "pubmed": "PubMed", "openalex": "OpenAlex"})
 
 
 def _radar(values: list[float], width: int = 700, height: int = 300, rings: int = 4) -> dict[str, Any]:

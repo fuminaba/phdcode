@@ -97,7 +97,7 @@ Many publishers refuse a download by a script. phdcode stores the reason, and th
 
 A saved search is a standing query at one source, with an interest statement and a threshold. Ask the agent to add one, for example: "Add a saved search on PubMed for 'prostate biopsy deep learning'. Interest: Gleason grading or cancer detection on prostate biopsies with deep learning." The agent calls `add_saved_search`.
 
-The sweep runs each saved search and asks the summary model, for each new hit, whether the PhD student with your library would want to read it. Your library is the papers that you added and the hits that you marked as relevant. The sweep saves the hits at or above the threshold (0.3 by default), and writes the digest of the day to `logs/digests/`, ordered by the interest statement. The timer runs the PDF queue first, then the sweep, the summaries and the backup. Run the sweep by hand:
+The sweep runs each saved search and asks the summary model, for each new hit, whether the PhD student with your library would want to read it. Your library is the papers that you added and the hits that you marked as relevant. The sweep saves the hits at or above the threshold (0.3 by default), and writes the digest of the day to `logs/digests/`, ordered by the interest statement. The page Digests shows each day as a card that opens and closes: for each saved search (by a short name), its relevant papers with their authors, date and triage probability, linked to their pages; the searches with no relevant hit share one line. The timer runs the PDF queue first, then the sweep, the summaries and the backup. Run the sweep by hand:
 
 ```bash
 phdcode sweep
