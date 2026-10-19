@@ -110,6 +110,9 @@ and can be *revised* (ADR-0025).
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
 
+**Label** — the user's judgement of a judged hit: relevant or not relevant
+to its saved search. The labels test triage; they do not feed it (ADR-0027).
+
 **Sweep** — one pass over all saved searches that collects new hits, triages
 them, stores the relevant ones as abstract-only papers, and writes a digest.
 

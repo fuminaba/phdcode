@@ -483,14 +483,18 @@ async def triaged_source_ids(saved_search_id: int, source_ids: Sequence[str]) ->
     return {row["source_id"] for row in rows}
 
 
-async def record_triage(saved_search_id: int, source_id: str, probability: float) -> None:
+async def record_triage(saved_search_id: int, hit: dict[str, Any], probability: float) -> None:
+    """Stores the judgement of a hit (a source record) with its text, for the
+    page Labels (ADR-0027). A judgement again keeps the user's label."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO triaged_hits (saved_search_id, source_id, probability) VALUES ($1, $2, $3) "
+            "INSERT INTO triaged_hits (saved_search_id, source_id, probability, title, abstract, url) "
+            "VALUES ($1, $2, $3, $4, $5, $6) "
             "ON CONFLICT (saved_search_id, source_id) DO UPDATE SET probability = EXCLUDED.probability, "
-            "triaged_at = now()",
-            saved_search_id, source_id, probability,
+            "triaged_at = now(), title = EXCLUDED.title, abstract = EXCLUDED.abstract, url = EXCLUDED.url",
+            saved_search_id, hit["source_id"], probability, hit.get("title"), hit.get("abstract_text"),
+            hit.get("hyperlink"),
         )
 
 

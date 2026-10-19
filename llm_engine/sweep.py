@@ -132,7 +132,7 @@ async def sweep_one(saved: dict[str, Any]) -> list[str]:
         if probability is None:
             invalid += 1
             continue
-        await record_triage(saved["id"], hit["source_id"], probability)
+        await record_triage(saved["id"], hit, probability)
         if probability >= saved["threshold"]:
             relevant.append((hit, probability))
 
