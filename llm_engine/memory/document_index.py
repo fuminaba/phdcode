@@ -21,7 +21,6 @@ from ..prompts import (
     methods_summary_prompt,
     results_summary_prompt,
 )
-from ..schemas import PAPER_METADATA_SCHEMA
 from ..sources import lookup
 
 from .db import (
@@ -71,6 +70,14 @@ MAP_CHUNK_OVERLAP = 300
 # CPU (ADR-0017). The drain upgrades
 # a 'text' paper to 'balanced'.
 PARSE_MODE = "text"
+
+# The metadata of a local PDF, from its first chunk.
+PAPER_METADATA_SCHEMA = {
+    "title" : (str, ...),
+    "authors" : (list[str], ...),
+    "keywords" : (list[str], ...),
+    "abstract" : (str, ...),
+}
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 # marker's paginate_output line before each page: "{0}" + 48 dashes.
