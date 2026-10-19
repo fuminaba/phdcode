@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-18 (after `21c20f7`)
+**Updated:** 2026-10-19 (after `21c20f7`)
 
 <!--
 CONVENTION -- read before editing.
@@ -29,6 +29,7 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 - **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. The service runs the sweep, then `phdcode ingest`, then `phdcode summarize`.
 - **The first sweep of the 10 saved searches** (created 2026-10-12 from the interest profile; the profile is the set of saved searches) waits for Fumi's yes; then the sweep timer.
 - **11 Zotero PDFs are on the Mac** (`/Users/fuminaba/Zotero/storage`). With a copy on the server, `phdcode queue FILES` puts each into the queue of its paper.
+- **The shadow score of the System One head and the log of MCP tool calls** (ADR-0028) are built and tested, not committed; the message is in the vault: `Projects/phdcode/agents/commits/25-code-system-one-data.md`. The live schema has `head_probability` and `tool_calls`; the 81 week-1 hits have their head score (AUC 0.836 on the labels, against 0.766 for the stored triage probabilities). The sweep timer is still not installed, so `phdcode headscore` runs only by hand until then.
 - **Fumi labels the hits on the page Labels** (ADR-0027, not committed; the message is in the vault: `Projects/phdcode/agents/commits/24-code-labels.md`). The live schema has the new columns, and the week-1 labels of the vault note `Projects/phdcode/notes/2026-10-12 Triage labels week 1.md` are imported: 81 hits, 26 relevant (the sections Search 11 to 14 are under the cancelled searches 2, 4, 5 and 6, which they replaced on 2026-10-13). The threshold 0.3 rests on them (ADR-0018). A label does not add a paper to the library; the agent saves a paper with `save_paper`.
 - **The old rows in Postgres.** The old tables hold 2 documents, 51 chunks, 24 conversations and 7 hooks. Fumi decides: export them, or drop the old tables. The new tables do not touch them.
 - **The server needs a reboot** for the NVIDIA driver (the library is 595.99, the kernel module 595.91). Only NVML fails (`nvidia-smi`); CUDA works. Until the reboot, `gpu.free_vram_mib()` reads the free VRAM through a PyTorch child process (3 s instead of an instant `nvidia-smi`).

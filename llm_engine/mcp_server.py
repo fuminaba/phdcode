@@ -9,10 +9,12 @@ to stderr, and the PDF parse runs in a subprocess (documents.py).
 """
 import asyncio
 import functools
+import inspect
 import json
 import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
@@ -39,6 +41,7 @@ from .memory import (
     list_saved_searches as db_list_saved_searches,
     paper_for_pdf,
     queue_pdf,
+    record_tool_call,
     save_record,
     search_chunks as db_search_chunks,
     search_papers as db_search_papers,
@@ -97,16 +100,31 @@ def tool(fn=None, *, read_only=False):
     No output schema (structured_output=False): the result is JSON text. A
     schema makes the MCP client validate the result, and in dcode 0.1.73 that
     validation imports jsonschema on the server event loop, which stops the
-    run with a BlockingError."""
+    run with a BlockingError.
+
+    Each call is logged in tool_calls (ADR-0028); a failed log only warns."""
     if fn is None:
         return functools.partial(tool, read_only=read_only)
 
+    signature = inspect.signature(fn)
+
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
+        start, error = time.monotonic(), None
         try:
             return await fn(*args, **kwargs)
         except (ValueError, RuntimeError, requests.RequestException) as e:
-            raise ToolError(str(e)) from e
+            error = str(e)
+            raise ToolError(error) from e
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            try:
+                await record_tool_call(fn.__name__, dict(signature.bind(*args, **kwargs).arguments), error is None,
+                                       error, round(1000 * (time.monotonic() - start)))
+            except Exception:
+                log.warning("tool_calls: the call of %s was not logged", fn.__name__, exc_info=True)
     annotations = ToolAnnotations(read_only_hint=True) if read_only else None
     return server.tool(annotations=annotations, structured_output=False)(wrapper)
 

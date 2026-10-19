@@ -1,13 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Labels · phdcode{% endblock %}
-{% block head %}<style>.lab-yes { --c: var(--ok); } .lab-no { --c: var(--bad); }</style>{% endblock %}
+{% block head %}<style>
+.lab-yes { --c: var(--ok); } .lab-no { --c: var(--bad); }
+/* The short columns fit their content; the column Hit takes the rest of the width. */
+table.labels .fit { width: 1%; white-space: nowrap; }
+table.labels .search { max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+</style>{% endblock %}
 {% macro row(h) %}
 <tr>
-  <td class="{{ 'ok' if h.guess }}">{{ "%.2f"|format(h.probability) }}</td>
-  <td><span class="tag">{{ h.name }}</span></td>
+  <td class="fit {{ 'ok' if h.guess }}">{{ "%.2f"|format(h.probability) }}</td>
+  <td class="fit muted">{{ "%.2f"|format(h.head_probability) if h.head_probability is not none else "" }}</td>
+  <td class="fit"><span class="tag search" title="{{ h.interest }}">{{ h.name }}</span></td>
   <td>{% if h.paper_id %}<a href="/papers/{{ h.paper_id }}">{{ h.title or h.source_id }}</a>{% else %}<a href="{{ h.url or source_url(h.source, h.source_id) }}">{{ h.title or (h.source ~ ":" ~ h.source_id) }}</a>{% endif %}
     {% if h.abstract %}<details><summary class="muted">Abstract</summary><p>{{ h.abstract }}</p></details>{% endif %}</td>
-  <td class="label" data-url="/labels/{{ h.saved_search_id }}/{{ h.source_id }}">
+  <td class="label fit" data-url="/labels/{{ h.saved_search_id }}/{{ h.source_id }}">
     <button type="button" class="tag imp lab-yes{{ ' on' if h.label == true }}" value="true">relevant</button>
     <button type="button" class="tag imp lab-no{{ ' on' if h.label == false }}" value="false">not relevant</button>
     <div class="muted">{% if h.label is none %}guess: {{ "relevant" if h.guess else "not relevant" }}{% elif h.label == h.guess %}agrees with the guess{% else %}differs from the guess{% endif %}</div>
@@ -20,21 +26,22 @@
   <p>Every hit that triage judged, also the ones below the threshold of their search. The guess is "relevant" when the probability is at or above that threshold. Mark each hit as you see it: the labels choose the thresholds and test each change of triage (ADR-0027). A click on the label that is set clears it.</p>
   <p><b>{{ labelled|length }}</b> of {{ labelled|length + todo|length }} hits labelled, {{ relevant }} relevant.
   {% if labelled %}The guess agrees with {{ agree }} of {{ labelled|length }} ({{ "%.0f"|format(100 * agree / labelled|length) }} %).{% endif %}
-  {% if auc is not none %}AUC of the triage probability on the labels: <b>{{ "%.3f"|format(auc) }}</b>.{% endif %}</p>
+  {% if auc is not none %}AUC of the triage probability on the labels: <b>{{ "%.3f"|format(auc) }}</b>.{% endif %}
+  {% if head_auc is not none %}AUC of the System One head (column Head, ADR-0028) on its {{ head_n }} labelled hits: <b>{{ "%.3f"|format(head_auc) }}</b>.{% endif %}</p>
 </div>
 
 <h2>To label ({{ todo|length }})</h2>
 {% if todo %}
-<div class="scroll"><table>
-<tr><th>Probability</th><th>Search</th><th>Hit</th><th>Label</th></tr>
+<div class="scroll"><table class="labels">
+<tr><th class="fit">Probability</th><th class="fit" title="The shadow score of the System One head (ADR-0028)">Head</th><th class="fit">Search</th><th>Hit</th><th class="fit">Label</th></tr>
 {% for h in todo %}{{ row(h) }}{% endfor %}
 </table></div>
 {% else %}<div class="panel muted">Every judged hit has a label.</div>{% endif %}
 
 {% if labelled %}
 <details><summary><h2 style="display:inline">Labelled ({{ labelled|length }})</h2></summary>
-<div class="scroll"><table>
-<tr><th>Probability</th><th>Search</th><th>Hit</th><th>Label</th></tr>
+<div class="scroll"><table class="labels">
+<tr><th class="fit">Probability</th><th class="fit" title="The shadow score of the System One head (ADR-0028)">Head</th><th class="fit">Search</th><th>Hit</th><th class="fit">Label</th></tr>
 {% for h in labelled %}{{ row(h) }}{% endfor %}
 </table></div></details>
 {% endif %}
