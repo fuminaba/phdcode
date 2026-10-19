@@ -10,9 +10,7 @@ in a subprocess, and selects the device:
 The subprocess keeps marker's output away from the MCP server's stdout (the
 protocol channel), and frees marker's RAM when the parse ends.
 """
-import io
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -52,10 +50,6 @@ def first_pages(pdf_path: Path, count: int = 2) -> list[str]:
     finally:
         pdf.close()
 
-# Matches a run of consecutive markdown table rows (header, separator, data).
-_TABLE_PATTERN = re.compile(r"((?:^\|.*\|\s*\n)+)", re.MULTILINE)
-
-
 def text_path_for(pdf_path: Path) -> Path:
     return pdf_path.with_suffix(pdf_path.suffix + ".md")
 
@@ -82,35 +76,11 @@ def _extract(path: Path) -> tuple[str, dict]:
     return text, images
 
 
-def _markdown_table_to_dataframe(markdown_table: str):
-    """Parses one markdown table (header, separator, data rows) into a
-    polars DataFrame. Adapted from a prior project's marker-pdf pipeline
-    (ALiRA: core/document_processor/services/marker_pdf2md.py)."""
-    import polars as pl
-
-    raw_lines = markdown_table.strip().split("\n")
-    cleaned_lines = []
-    for idx, line in enumerate(raw_lines):
-        if idx == 1 and "-" in line:
-            continue  # the header/data separator row, e.g. |---|---|
-        line = line.strip().strip("|")
-        cells = [cell.strip() for cell in line.split("|")]
-        cleaned_lines.append("|".join(cells))
-
-    data_txt = "\n".join(cleaned_lines)
-    return pl.read_csv(io.StringIO(data_txt), separator="|", has_header=True)
-
-
-def _extract_tables(markdown_text: str) -> list[str]:
-    return [t.strip() for t in _TABLE_PATTERN.findall(markdown_text)]
-
-
 def parse_pdf(pdf_path: Path) -> Path:
     """Parses pdf_path and writes the results next to it:
 
         {pdf}.md              <- extracted markdown, with page separators
         images/{name}         <- embedded images, if any
-        tables/{i}.csv        <- extracted tables, if any
 
     Returns the path of the markdown file. CPU-heavy: run it in a subprocess
     (see the module docstring), not in the MCP server.
@@ -124,15 +94,6 @@ def parse_pdf(pdf_path: Path) -> Path:
         images_dir.mkdir(exist_ok=True)
         for name, image in images.items():
             image.save(images_dir / name)
-
-    for i, table_md in enumerate(_extract_tables(text)):
-        try:
-            df = _markdown_table_to_dataframe(table_md)
-        except Exception:
-            continue  # malformed table -- skip it, don't fail the whole parse
-        tables_dir = pdf_path.parent / "tables"
-        tables_dir.mkdir(exist_ok=True)
-        df.write_csv(tables_dir / f"{i}.csv")
 
     return text_path
 
