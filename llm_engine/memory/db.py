@@ -44,9 +44,7 @@ async def get_pool() -> asyncpg.Pool:
 async def init_schema() -> None:
     """Applies schema.sql. Idempotent (CREATE ... IF NOT EXISTS throughout)."""
     schema_sql = SCHEMA_PATH.read_text().format(embedding_dim=EMBEDDING_DIM)
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(schema_sql)
+    await (await get_pool()).execute(schema_sql)
 
 
 def _check_facet(facet: str) -> str:
@@ -110,54 +108,44 @@ async def save_paper(
 async def get_paper(paper_id: int) -> Optional[dict[str, Any]]:
     """The stored record of one paper, with its facet texts, its keywords and
     its chunk count, or None."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
-            "       p.doi, p.url, p.pdf_url, p.abstract, p.methods_summary, p.results_summary, "
-            "       p.parse_mode, p.importance, p.notes, p.read_at, p.deleted_at, "
-            "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks, "
-            "       COALESCE(("
-            "           SELECT array_agg(k.word ORDER BY k.word) FROM paper_keywords pk "
-            "           JOIN keywords k ON k.id = pk.keyword_id WHERE pk.paper_id = p.id"
-            "       ), ARRAY[]::TEXT[]) AS keywords "
-            "FROM papers p WHERE p.id = $1",
-            paper_id,
-        )
+    row = await (await get_pool()).fetchrow(
+        "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
+        "       p.doi, p.url, p.pdf_url, p.abstract, p.methods_summary, p.results_summary, "
+        "       p.parse_mode, p.importance, p.notes, p.read_at, p.deleted_at, "
+        "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks, "
+        "       COALESCE(("
+        "           SELECT array_agg(k.word ORDER BY k.word) FROM paper_keywords pk "
+        "           JOIN keywords k ON k.id = pk.keyword_id WHERE pk.paper_id = p.id"
+        "       ), ARRAY[]::TEXT[]) AS keywords "
+        "FROM papers p WHERE p.id = $1",
+        paper_id,
+    )
     return dict(row) if row else None
 
 
 async def find_paper(source: str, source_id: str) -> Optional[int]:
     """The id of the stored paper with this source and source_id, or None."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchval(
-            "SELECT id FROM papers WHERE source = $1 AND source_id = $2", source, source_id,
-        )
+    return await (await get_pool()).fetchval(
+        "SELECT id FROM papers WHERE source = $1 AND source_id = $2", source, source_id,
+    )
 
 
 async def library_titles() -> list[str]:
     """The titles of the user's papers (not the sweep's), oldest first: the
     library that triage reads (ADR-0018)."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT title FROM papers WHERE origin IS NULL AND title IS NOT NULL AND deleted_at IS NULL "
-                                "ORDER BY id")
+    rows = await (await get_pool()).fetch("SELECT title FROM papers WHERE origin IS NULL AND title IS NOT NULL AND deleted_at IS NULL "
+                                          "ORDER BY id")
     return [row["title"] for row in rows]
 
 
 async def find_paper_by_doi(doi: str) -> Optional[int]:
     """The id of a stored paper with this DOI (any source), or None."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchval("SELECT id FROM papers WHERE lower(doi) = lower($1) ORDER BY id LIMIT 1", doi)
+    return await (await get_pool()).fetchval("SELECT id FROM papers WHERE lower(doi) = lower($1) ORDER BY id LIMIT 1", doi)
 
 
 async def find_paper_by_pdf_source(pdf_source: str) -> Optional[int]:
     """The id of the paper whose PDF queue holds (or held) this source, or None."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchval("SELECT id FROM papers WHERE pdf_source = $1 ORDER BY id LIMIT 1", pdf_source)
+    return await (await get_pool()).fetchval("SELECT id FROM papers WHERE pdf_source = $1 ORDER BY id LIMIT 1", pdf_source)
 
 
 async def find_paper_in_text(text: str) -> Optional[int]:
@@ -165,61 +153,49 @@ async def find_paper_in_text(text: str) -> Optional[int]:
     any case), or None. The longest title wins, so that the first page of
     "How Attentive are Graph Attention Networks?" is not the PDF of "Graph
     Attention Networks"."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchval(
-            "SELECT id FROM (SELECT id, regexp_replace(lower(title), '[^a-z0-9]', '', 'g') AS t FROM papers) p "
-            "WHERE t <> '' AND strpos(regexp_replace(lower($1), '[^a-z0-9]', '', 'g'), t) > 0 "
-            "ORDER BY length(t) DESC, id LIMIT 1",
-            text,
-        )
+    return await (await get_pool()).fetchval(
+        "SELECT id FROM (SELECT id, regexp_replace(lower(title), '[^a-z0-9]', '', 'g') AS t FROM papers) p "
+        "WHERE t <> '' AND strpos(regexp_replace(lower($1), '[^a-z0-9]', '', 'g'), t) > 0 "
+        "ORDER BY length(t) DESC, id LIMIT 1",
+        text,
+    )
 
 
 async def full_text_papers(paper_ids: Optional[Sequence[int]] = None) -> list[dict[str, Any]]:
     """The full-text papers (all, or these ids) with their parse mode and files."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, parse_mode, pdf_path, text_path FROM papers "
-            "WHERE parse_mode IS NOT NULL AND deleted_at IS NULL AND ($1::bigint[] IS NULL OR id = ANY($1)) ORDER BY id",
-            None if paper_ids is None else list(paper_ids),
-        )
+    rows = await (await get_pool()).fetch(
+        "SELECT id, parse_mode, pdf_path, text_path FROM papers "
+        "WHERE parse_mode IS NOT NULL AND deleted_at IS NULL AND ($1::bigint[] IS NULL OR id = ANY($1)) ORDER BY id",
+        None if paper_ids is None else list(paper_ids),
+    )
     return [dict(row) for row in rows]
 
 
 async def queue_pdf(paper_id: int, pdf_source: str) -> None:
     """Puts the PDF of a paper (a URL or a local path) into the queue of
     `phdcode ingest`, and clears an earlier failure."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("UPDATE papers SET pdf_source = $2, pdf_error = NULL WHERE id = $1",
-                           paper_id, pdf_source)
+    await (await get_pool()).execute("UPDATE papers SET pdf_source = $2, pdf_error = NULL WHERE id = $1",
+                                     paper_id, pdf_source)
 
 
 async def queued_pdfs() -> list[dict[str, Any]]:
     """The abstract-only papers in the PDF queue that did not fail, oldest first."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, source_id, pdf_source FROM papers "
-            "WHERE pdf_source IS NOT NULL AND parse_mode IS NULL AND pdf_error IS NULL AND deleted_at IS NULL ORDER BY id"
-        )
+    rows = await (await get_pool()).fetch(
+        "SELECT id, source_id, pdf_source FROM papers "
+        "WHERE pdf_source IS NOT NULL AND parse_mode IS NULL AND pdf_error IS NULL AND deleted_at IS NULL ORDER BY id"
+    )
     return [dict(row) for row in rows]
 
 
 async def set_pdf_error(paper_id: int, error: str) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("UPDATE papers SET pdf_error = $2 WHERE id = $1", paper_id, error)
+    await (await get_pool()).execute("UPDATE papers SET pdf_error = $2 WHERE id = $1", paper_id, error)
 
 
 async def update_paper_metadata(paper_id: int, title: Optional[str], authors: Sequence[str]) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE papers SET title = $1, authors = $2, updated_at = now() WHERE id = $3",
-            title, list(authors), paper_id,
-        )
+    await (await get_pool()).execute(
+        "UPDATE papers SET title = $1, authors = $2, updated_at = now() WHERE id = $3",
+        title, list(authors), paper_id,
+    )
 
 
 async def add_paper_keywords(paper_id: int, keywords: Sequence[str]) -> None:
@@ -251,13 +227,11 @@ async def set_facet(paper_id: int, facet: str, text: str, embedding: list[float]
     """Writes the text and the embedding of one facet. For 'concept' the text
     is the abstract."""
     facet = _check_facet(facet)
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            f"UPDATE papers SET {_FACET_TEXT[facet]} = $1, {facet}_embedding = $2, updated_at = now() "
-            f"WHERE id = $3",
-            text, embedding, paper_id,
-        )
+    await (await get_pool()).execute(
+        f"UPDATE papers SET {_FACET_TEXT[facet]} = $1, {facet}_embedding = $2, updated_at = now() "
+        f"WHERE id = $3",
+        text, embedding, paper_id,
+    )
 
 
 async def set_full_text(
@@ -321,14 +295,12 @@ async def pending_papers() -> list[dict[str, Any]]:
     """The full-text papers with a pending model step: no methods or results
     summary, or a local PDF (no source) with no title. needs_metadata marks
     the second kind."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, text_path, (source IS NULL AND title IS NULL) AS needs_metadata FROM papers "
-            "WHERE parse_mode IS NOT NULL AND deleted_at IS NULL "
-            "AND (methods_summary IS NULL OR results_summary IS NULL OR (source IS NULL AND title IS NULL)) "
-            "ORDER BY id"
-        )
+    rows = await (await get_pool()).fetch(
+        "SELECT id, text_path, (source IS NULL AND title IS NULL) AS needs_metadata FROM papers "
+        "WHERE parse_mode IS NOT NULL AND deleted_at IS NULL "
+        "AND (methods_summary IS NULL OR results_summary IS NULL OR (source IS NULL AND title IS NULL)) "
+        "ORDER BY id"
+    )
     return [dict(row) for row in rows]
 
 
@@ -376,21 +348,19 @@ async def search_papers(
     methods or results) is not a candidate. Returns the text of the searched
     facet as `text`, with the metadata and the parse_mode of each paper."""
     facet = _check_facet(facet)
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            _rrf_cte("papers", f"{facet}_embedding", f"{facet}_tsv", "deleted_at IS NULL")
-            + f"SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
-            f"       p.doi, p.url, p.parse_mode, p.{_FACET_TEXT[facet]} AS text, f.score, "
-            f"       COALESCE(("
-            f"           SELECT array_agg(k.word) FROM paper_keywords pk "
-            f"           JOIN keywords k ON k.id = pk.keyword_id "
-            f"           WHERE pk.paper_id = p.id"
-            f"       ), ARRAY[]::TEXT[]) AS keywords "
-            f"FROM fused f JOIN papers p ON p.id = f.id "
-            f"ORDER BY f.score DESC LIMIT $3",
-            query_embedding, query, max_results, _CANDIDATE_POOL, _RRF_K,
-        )
+    rows = await (await get_pool()).fetch(
+        _rrf_cte("papers", f"{facet}_embedding", f"{facet}_tsv", "deleted_at IS NULL")
+        + f"SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
+        f"       p.doi, p.url, p.parse_mode, p.{_FACET_TEXT[facet]} AS text, f.score, "
+        f"       COALESCE(("
+        f"           SELECT array_agg(k.word) FROM paper_keywords pk "
+        f"           JOIN keywords k ON k.id = pk.keyword_id "
+        f"           WHERE pk.paper_id = p.id"
+        f"       ), ARRAY[]::TEXT[]) AS keywords "
+        f"FROM fused f JOIN papers p ON p.id = f.id "
+        f"ORDER BY f.score DESC LIMIT $3",
+        query_embedding, query, max_results, _CANDIDATE_POOL, _RRF_K,
+    )
     return [dict(row) for row in rows]
 
 
@@ -428,109 +398,89 @@ async def search_chunks(
 async def get_chunks(paper_id: int, chunk_indexes: Sequence[int]) -> list[dict[str, Any]]:
     """The chunks of one paper with these indexes, in text order, with the
     title of the paper and the links of each chunk."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT c.paper_id, p.title, c.chunk_index, c.page_start, c.page_end, c.section, c.content, "
-            f"{_LINKS_OF_CHUNK} AS links "
-            "FROM chunks c JOIN papers p ON p.id = c.paper_id "
-            "WHERE c.paper_id = $1 AND c.chunk_index = ANY($2) ORDER BY c.chunk_index",
-            paper_id, list(chunk_indexes),
-        )
+    rows = await (await get_pool()).fetch(
+        "SELECT c.paper_id, p.title, c.chunk_index, c.page_start, c.page_end, c.section, c.content, "
+        f"{_LINKS_OF_CHUNK} AS links "
+        "FROM chunks c JOIN papers p ON p.id = c.paper_id "
+        "WHERE c.paper_id = $1 AND c.chunk_index = ANY($2) ORDER BY c.chunk_index",
+        paper_id, list(chunk_indexes),
+    )
     return [dict(row) for row in rows]
 
 
 async def add_saved_search(source: str, query: str, interest: str, threshold: float = 0.5) -> int:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchval(
-            "INSERT INTO saved_searches (source, query, interest, threshold) "
-            "VALUES ($1, $2, $3, $4) RETURNING id",
-            source, query, interest, threshold,
-        )
+    return await (await get_pool()).fetchval(
+        "INSERT INTO saved_searches (source, query, interest, threshold) "
+        "VALUES ($1, $2, $3, $4) RETURNING id",
+        source, query, interest, threshold,
+    )
 
 
 async def list_saved_searches() -> list[dict[str, Any]]:
     """The saved searches that are not cancelled, oldest first."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, source, query, interest, threshold, created_at, last_swept_at "
-            "FROM saved_searches WHERE cancelled_at IS NULL ORDER BY id"
-        )
+    rows = await (await get_pool()).fetch(
+        "SELECT id, source, query, interest, threshold, created_at, last_swept_at "
+        "FROM saved_searches WHERE cancelled_at IS NULL ORDER BY id"
+    )
     return [dict(row) for row in rows]
 
 
 async def cancel_saved_search(saved_search_id: int) -> bool:
     """Returns False if no active saved search has this id."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        status = await conn.execute(
-            "UPDATE saved_searches SET cancelled_at = now() WHERE id = $1 AND cancelled_at IS NULL",
-            saved_search_id,
-        )
+    status = await (await get_pool()).execute(
+        "UPDATE saved_searches SET cancelled_at = now() WHERE id = $1 AND cancelled_at IS NULL",
+        saved_search_id,
+    )
     return status == "UPDATE 1"
 
 
 async def triaged_source_ids(saved_search_id: int, source_ids: Sequence[str]) -> set[str]:
     """The source_ids that triage already judged for this saved search."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT source_id FROM triaged_hits WHERE saved_search_id = $1 AND source_id = ANY($2)",
-            saved_search_id, list(source_ids),
-        )
+    rows = await (await get_pool()).fetch(
+        "SELECT source_id FROM triaged_hits WHERE saved_search_id = $1 AND source_id = ANY($2)",
+        saved_search_id, list(source_ids),
+    )
     return {row["source_id"] for row in rows}
 
 
 async def record_triage(saved_search_id: int, hit: dict[str, Any], probability: float) -> None:
     """Stores the judgement of a hit (a source record) with its text, for the
     page Labels (ADR-0027). A judgement again keeps the user's label."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO triaged_hits (saved_search_id, source_id, probability, title, abstract, url) "
-            "VALUES ($1, $2, $3, $4, $5, $6) "
-            "ON CONFLICT (saved_search_id, source_id) DO UPDATE SET probability = EXCLUDED.probability, "
-            "triaged_at = now(), title = EXCLUDED.title, abstract = EXCLUDED.abstract, url = EXCLUDED.url",
-            saved_search_id, hit["source_id"], probability, hit.get("title"), hit.get("abstract_text"),
-            hit.get("hyperlink"),
-        )
+    await (await get_pool()).execute(
+        "INSERT INTO triaged_hits (saved_search_id, source_id, probability, title, abstract, url) "
+        "VALUES ($1, $2, $3, $4, $5, $6) "
+        "ON CONFLICT (saved_search_id, source_id) DO UPDATE SET probability = EXCLUDED.probability, "
+        "triaged_at = now(), title = EXCLUDED.title, abstract = EXCLUDED.abstract, url = EXCLUDED.url",
+        saved_search_id, hit["source_id"], probability, hit.get("title"), hit.get("abstract_text"),
+        hit.get("hyperlink"),
+    )
 
 
 async def unscored_hits() -> list[dict[str, Any]]:
     """The judged hits with a title and no shadow score of the head (ADR-0028)."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT t.saved_search_id, t.source_id, coalesce(t.title, p.title) AS title, "
-            "       coalesce(t.abstract, p.abstract) AS abstract "
-            "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
-            "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
-            "WHERE t.head_probability IS NULL AND coalesce(t.title, p.title) IS NOT NULL")
+    rows = await (await get_pool()).fetch(
+        "SELECT t.saved_search_id, t.source_id, coalesce(t.title, p.title) AS title, "
+        "       coalesce(t.abstract, p.abstract) AS abstract "
+        "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
+        "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
+        "WHERE t.head_probability IS NULL AND coalesce(t.title, p.title) IS NOT NULL")
     return [dict(r) for r in rows]
 
 
 async def record_head_probabilities(scores: list[tuple[int, str, float]]) -> None:
     """(saved_search_id, source_id, P(yes)) of the head for each hit (ADR-0028)."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.executemany("UPDATE triaged_hits SET head_probability = $3 WHERE saved_search_id = $1 AND source_id = $2",
-                               scores)
+    await (await get_pool()).executemany("UPDATE triaged_hits SET head_probability = $3 WHERE saved_search_id = $1 AND source_id = $2",
+                                         scores)
 
 
 async def record_tool_call(tool: str, arguments: dict[str, Any], ok: bool, error: Optional[str], ms: int) -> None:
     """Stores one call of an MCP tool (ADR-0028)."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO tool_calls (tool, arguments, ok, error, ms) VALUES ($1, $2, $3, $4, $5)",
-                           tool, arguments, ok, error, ms)
+    await (await get_pool()).execute("INSERT INTO tool_calls (tool, arguments, ok, error, ms) VALUES ($1, $2, $3, $4, $5)",
+                                     tool, arguments, ok, error, ms)
 
 
 async def mark_swept(saved_search_id: int) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("UPDATE saved_searches SET last_swept_at = now() WHERE id = $1", saved_search_id)
+    await (await get_pool()).execute("UPDATE saved_searches SET last_swept_at = now() WHERE id = $1", saved_search_id)
 
 
 async def close_pool() -> None:
