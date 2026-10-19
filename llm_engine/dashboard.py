@@ -72,13 +72,12 @@ def _when(value: Any) -> str:
 
 
 templates.env.filters["when"] = _when
-# [P12] in a model answer links to paper 12.
-templates.env.filters["cite_links"] = lambda text: Markup(
-    re.sub(r"\[P(\d+)\]", r'<a href="/papers/\1">[P\1]</a>', str(escape(text or ""))))
+# [P12] in a model answer links to paper 12: in plain text (cite_links), and in
+# a tutor reply, which is Markdown without raw HTML (md_cites).
 _CITE = re.compile(r"\[P(\d+)\]")
-# A tutor reply: Markdown without raw HTML, with [P12] linked to paper 12.
-templates.env.filters["md_cites"] = lambda text: Markup(_CITE.sub(r'<a href="/papers/\1">[P\1]</a>',
-                                                                  _markdown.render(text or "")))
+_link_cites = lambda html: Markup(_CITE.sub(r'<a href="/papers/\1">[P\1]</a>', html))
+templates.env.filters["cite_links"] = lambda text: _link_cites(str(escape(text or "")))
+templates.env.filters["md_cites"] = lambda text: _link_cites(_markdown.render(text or ""))
 templates.env.globals["importance_levels"] = IMPORTANCE
 templates.env.globals["zip"] = zip
 templates.env.globals["source_url"] = lambda source, source_id: (
@@ -158,9 +157,7 @@ def _config() -> list[tuple[str, Any]]:
 
 
 async def _fetch(query: str, *args: Any) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        return [dict(r) for r in await conn.fetch(query, *args)]
+    return [dict(r) for r in await (await get_pool()).fetch(query, *args)]
 
 
 _PAPERS_SQL = (
@@ -236,10 +233,7 @@ async def paper(request: Request, paper_id: int):
 async def set_importance(paper_id: int, level: str = ""):
     if level not in IMPORTANCE + ("",):
         raise HTTPException(422, f"The importance must be one of {IMPORTANCE} or empty.")
-    rows = await _fetch("UPDATE papers SET importance = $2, updated_at = now() WHERE id = $1 RETURNING id",
-                        paper_id, level or None)
-    if not rows:
-        raise HTTPException(404, f"No paper has id {paper_id}.")
+    await _update_paper(paper_id, "importance = $2", level or None)
     return {"id": paper_id, "importance": level or None}
 
 
@@ -475,12 +469,10 @@ async def new_question(request: Request):
 async def answer_question(question_id: int, request: Request):
     """{"answer": "...", "model": "..."} saves and grades the answer; {"answer": null}
     grades the saved one again. model is the grader (default GRADE_MODEL)."""
-    body = await request.json()
+    body = await _model_body(request, "model")
     answer = body.get("answer")
     if answer is not None and not answer.strip():
         raise HTTPException(422, "The answer is empty.")
-    if body.get("model") is not None and body["model"] not in questions.models():
-        raise HTTPException(422, f"Unknown model {body['model']!r}.")
     try:
         return await questions.grade(question_id, answer, body.get("model"))
     except LookupError as e:
@@ -493,12 +485,10 @@ async def answer_question(question_id: int, request: Request):
 async def chat_question(question_id: int, request: Request):
     """{"message": "...", "model": "..."}: the tutor's reply (ADR-0023), as
     HTML, so that the page adds it without a reload (an answer draft stays)."""
-    body = await request.json()
+    body = await _model_body(request, "model")
     message = (body.get("message") or "").strip()
     if not message:
         raise HTTPException(422, "The message is empty.")
-    if body.get("model") is not None and body["model"] not in questions.models():
-        raise HTTPException(422, f"Unknown model {body['model']!r}.")
     try:
         reply = await questions.chat(question_id, message, body.get("model"))
     except LookupError as e:
