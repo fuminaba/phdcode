@@ -11,32 +11,18 @@ import requests
 
 from dotenv import load_dotenv
 
-try:
-    from ..documents import PAPERS_DIR, PARSE_VRAM_MIB, first_pages, parse_seconds, text_path_for
-    from ..gpu import short_job
-    from ..embeddings import embed
-    from ..generation import generate
-    from ..prompts import (
-        chunk_digest_prompt,
-        document_metadata_prompt,
-        methods_summary_prompt,
-        results_summary_prompt,
-    )
-    from ..schemas import PAPER_METADATA_SCHEMA
-    from ..sources import lookup
-except ImportError:
-    from documents import PAPERS_DIR, PARSE_VRAM_MIB, first_pages, parse_seconds, text_path_for
-    from gpu import short_job
-    from embeddings import embed
-    from generation import generate
-    from prompts import (
-        chunk_digest_prompt,
-        document_metadata_prompt,
-        methods_summary_prompt,
-        results_summary_prompt,
-    )
-    from schemas import PAPER_METADATA_SCHEMA
-    from sources import lookup
+from ..documents import PAPERS_DIR, PARSE_VRAM_MIB, first_pages, parse_seconds, text_path_for
+from ..gpu import short_job
+from ..embeddings import embed
+from ..generation import generate
+from ..prompts import (
+    chunk_digest_prompt,
+    document_metadata_prompt,
+    methods_summary_prompt,
+    results_summary_prompt,
+)
+from ..schemas import PAPER_METADATA_SCHEMA
+from ..sources import lookup
 
 from .db import (
     add_paper_keywords,

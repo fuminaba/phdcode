@@ -10,12 +10,8 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 from pydantic import create_model
 
-try:
-    from .prompts import json_schema_instruction
-    from .routes import client, resolve
-except ImportError:
-    from prompts import json_schema_instruction
-    from routes import client, resolve
+from .prompts import json_schema_instruction
+from .routes import client, resolve
 
 load_dotenv()
 
