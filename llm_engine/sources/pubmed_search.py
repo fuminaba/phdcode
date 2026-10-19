@@ -1,8 +1,8 @@
 """
 pubmed_search.py
 
-PubMed (NCBI E-utilities) search with boolean AND/OR/NOT groups, field
-restriction, date filtering, and rate limiting. Returns records in the
+PubMed (NCBI E-utilities) search with date filtering and rate limiting. The
+query is in PubMed's own syntax (search tags, AND, OR, NOT). Returns records in the
 standardized cross-database schema shared with arxiv_search.py:
 
 {
@@ -34,41 +34,6 @@ import requests
 
 EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 
-# Maps a friendly field name to a PubMed search tag.
-# Full list: https://pubmed.ncbi.nlm.nih.gov/help/#search-tags
-FIELD_TAGS = {
-    "all": "",              # no tag = search all fields
-    "title": "[ti]",
-    "title_abstract": "[tiab]",
-    "author": "[au]",
-    "mesh": "[mesh]",
-    "journal": "[ta]",
-    "affiliation": "[ad]",
-    "publication_type": "[pt]",
-}
-
-# Translates the canonical field vocabulary (shared across db_handlers, see
-# docs/adr/0002) into PubMed's own FIELD_TAGS keys. Canonical values with no
-# precise PubMed equivalent fall back to "all" via canonical_to_pubmed_field
-# below - e.g. PubMed has no abstract-only tag, so "abstract" degrades to
-# the combined title_abstract tag rather than falling back further.
-CANONICAL_FIELD_MAP = {
-    "all": "all",
-    "title": "title",
-    "abstract": "title_abstract",
-    "author": "author",
-    "journal": "journal",
-}
-
-
-def canonical_to_pubmed_field(canonical_field: str) -> str:
-    """Translate a canonical field into PubMed's FIELD_TAGS vocabulary.
-
-    Falls back to "all" (unrestricted) for any canonical value PubMed has
-    no reasonable equivalent for.
-    """
-    return CANONICAL_FIELD_MAP.get(canonical_field, "all")
-
 # Real accepted values for ESearch's `sort` param on the pubmed db.
 SORT_MAP = {
     "relevance": "relevance",
@@ -82,60 +47,8 @@ SORT_MAP = {
 VALID_DATETYPES = {"pdat", "edat", "mdat"}
 
 
-def _quote_if_phrase(term: str) -> str:
-    term = term.strip()
-    return f'"{term}"' if " " in term else term
-
-
-def build_pubmed_query(
-    all_of: Optional[List[str]] = None,
-    any_of: Optional[List[str]] = None,
-    none_of: Optional[List[str]] = None,
-    field: str = "all",
-) -> str:
-    """
-    Build a PubMed boolean query string.
-
-    - all_of: terms/phrases that must ALL appear (AND'd together).
-    - any_of: terms/phrases where AT LEAST ONE must appear (OR'd, then
-              AND'd against the rest as one group).
-    - none_of: terms/phrases that must NOT appear (NOT'd).
-    - field: friendly field name applied to every term (see FIELD_TAGS).
-    """
-    if field not in FIELD_TAGS:
-        raise ValueError(f"field must be one of {list(FIELD_TAGS)}, got {field!r}")
-    tag = FIELD_TAGS[field]
-
-    clauses: List[str] = []
-
-    if all_of:
-        and_terms = [f"{_quote_if_phrase(t)}{tag}" for t in all_of if t.strip()]
-        clauses.extend(f"({t})" for t in and_terms)
-
-    if any_of:
-        or_terms = [f"{_quote_if_phrase(t)}{tag}" for t in any_of if t.strip()]
-        if or_terms:
-            clauses.append("(" + " OR ".join(or_terms) + ")")
-
-    if not clauses:
-        raise ValueError("At least one of all_of/any_of must be provided.")
-
-    query = " AND ".join(clauses)
-
-    if none_of:
-        not_terms = [f"{_quote_if_phrase(t)}{tag}" for t in none_of if t.strip()]
-        if not_terms:
-            query += " NOT (" + " OR ".join(not_terms) + ")"
-
-    return query
-
-
 def search_pubmed(
-    all_of: Optional[List[str]] = None,
-    any_of: Optional[List[str]] = None,
-    none_of: Optional[List[str]] = None,
-    field: str = "all",
-    raw_query: Optional[str] = None,
+    raw_query: str,
     max_results: int = 10,
     sort_by: str = "relevance",
     email: Optional[str] = None,
@@ -157,8 +70,6 @@ def search_pubmed(
     if bool(mindate) != bool(maxdate):
         raise ValueError("mindate and maxdate must be provided together")
 
-    query = raw_query or build_pubmed_query(all_of, any_of, none_of, field)
-
     common = {"db": "pubmed", "retmode": "json"}
     if email:
         common["email"] = email
@@ -167,7 +78,7 @@ def search_pubmed(
 
     search_params = {
         **common,
-        "term": query,
+        "term": raw_query,
         "retmax": max_results,
         "sort": SORT_MAP[sort_by],
     }
@@ -242,7 +153,7 @@ def search_pubmed(
                 "doi": doi,
                 "pdf_url": pdf_url,
                 "is_open_access": is_open_access,
-                "matched_query": query,
+                "matched_query": raw_query,
                 "raw": paper,
             }
         )
@@ -280,21 +191,3 @@ def _fetch_abstracts(pmids: List[str], common_params: Dict[str, str], timeout: i
 
     return abstracts
 
-
-if __name__ == "__main__":
-    results = search_pubmed(
-        all_of=["graph neural networks"],
-        any_of=["oncology", "pathology"],
-        none_of=["review"],
-        field="title_abstract",
-        max_results=5,
-        sort_by="relevance",
-        email="test@email.com",
-    )
-
-    print(f"Total papers found: {len(results)}\n")
-    for paper in results:
-        print(f"[{paper['src_db']}] {paper['db_id']}  {paper['title']}")
-        print(f"  Authors: {', '.join(paper['authors'])}")
-        print(f"  Venue: {paper['venue']}  |  OA: {paper['is_open_access']}")
-        print(f"  {paper['hyperlink']}\n")
