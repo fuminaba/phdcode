@@ -214,3 +214,7 @@ To build the documentation site on your machine:
 pip install -e ".[docs]"
 mkdocs serve
 ```
+
+## License
+
+phdcode is under the [Apache License 2.0](LICENSE).
