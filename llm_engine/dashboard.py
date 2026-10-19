@@ -8,6 +8,7 @@ units and the GPU state. It changes the importance of a paper (ADR-0019),
 its notes, its read mark and the bin (ADR-0026),
 the daily question with its answer (ADR-0020), the paper of the day
 (ADR-0024) and the writing coach (ADR-0025); the last three call a model.
+It also keeps the user's label of each judged hit (ADR-0027).
 """
 import asyncio
 import fcntl
@@ -363,6 +364,48 @@ async def digests(request: Request, day: str = ""):
         "SELECT id, source, source_id, importance FROM papers WHERE source || ':' || source_id = ANY($1)", refs)}
     return _page(request, "digests.html", days=days, papers=papers, open_day=day or (files[0].name if files else ""),
                  source_names={"arxiv": "arXiv", "pubmed": "PubMed", "openalex": "OpenAlex"})
+
+
+def _auc(scored: list[tuple[float, bool]]) -> float | None:
+    """The AUC of the probabilities against the labels (a tie counts half);
+    None without both kinds of label."""
+    pos = [p for p, y in scored if y]
+    neg = [p for p, y in scored if not y]
+    if not pos or not neg:
+        return None
+    return sum((p > n) + 0.5 * (p == n) for p in pos for n in neg) / (len(pos) * len(neg))
+
+
+@app.get("/labels")
+async def labels(request: Request):
+    """Every judged hit with its probability and the user's label (ADR-0027),
+    newest first; the unlabelled hits in their own table."""
+    hits = await _fetch(
+        "SELECT t.saved_search_id, t.source_id, t.probability, t.triaged_at, t.label, t.labelled_at, "
+        "       coalesce(t.title, p.title) AS title, coalesce(t.abstract, p.abstract) AS abstract, t.url, "
+        "       s.source, s.threshold, s.interest, p.id AS paper_id "
+        "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
+        "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
+        "ORDER BY t.triaged_at DESC, t.probability DESC")
+    for h in hits:
+        h["name"] = _search_name(h["interest"])
+        h["guess"] = h["probability"] >= h["threshold"]
+    labelled = [h for h in hits if h["label"] is not None]
+    return _page(request, "labels.html", todo=[h for h in hits if h["label"] is None], labelled=labelled,
+                 relevant=sum(h["label"] for h in labelled),
+                 agree=sum(h["guess"] == h["label"] for h in labelled),
+                 auc=_auc([(h["probability"], h["label"]) for h in labelled]))
+
+
+@app.post("/labels/{saved_search_id}/{source_id:path}")
+async def set_label(saved_search_id: int, source_id: str, label: bool | None = None):
+    """Sets the user's label of a judged hit; no label clears it."""
+    if not await _fetch("UPDATE triaged_hits SET label = $3::boolean, "
+                        "labelled_at = CASE WHEN $3::boolean IS NULL THEN NULL ELSE now() END "
+                        "WHERE saved_search_id = $1 AND source_id = $2 RETURNING source_id",
+                        saved_search_id, source_id, label):
+        raise HTTPException(404, f"Saved search {saved_search_id} has no judged hit {source_id}.")
+    return {"saved_search_id": saved_search_id, "source_id": source_id, "label": label}
 
 
 def _radar(values: list[float], width: int = 700, height: int = 300, rings: int = 4) -> dict[str, Any]:

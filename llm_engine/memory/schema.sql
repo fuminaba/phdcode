@@ -253,3 +253,11 @@ CREATE TABLE IF NOT EXISTS triaged_hits (
     triaged_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (saved_search_id, source_id)
 );
+-- The text of each judged hit and the user's label (ADR-0027): the page
+-- Labels shows every hit, also the ones below the threshold that the sweep
+-- does not save, so that the labelled set grows with each sweep.
+ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS abstract TEXT;
+ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS url TEXT;
+ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS label BOOLEAN;
+ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS labelled_at TIMESTAMPTZ;
