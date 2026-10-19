@@ -26,13 +26,16 @@ from dotenv import load_dotenv
 
 from .generation import generate
 from .prompts import triage_prompt
-from .schemas import TRIAGE_SCHEMA
 
 load_dotenv()
 
 log = logging.getLogger(__name__)
 
 TRIAGE_MODEL = os.getenv("TRIAGE_MODEL") or None
+
+TRIAGE_SCHEMA = {
+    "probability": (float, ...),
+}
 
 
 def _judge(hit: dict[str, Any], library: str) -> Optional[float]:

@@ -28,7 +28,7 @@ from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 
-from . import daily_paper, gpu, questions, writing
+from . import gpu, questions, writing
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
@@ -509,7 +509,7 @@ async def _model_body(request: Request, *fields: str) -> dict[str, Any]:
 
 @app.get("/paper-of-the-day")
 async def paper_of_the_day(request: Request):
-    brief = await daily_paper.today()
+    brief = await questions.daily_paper()
     paper = await get_paper(brief["paper_id"]) if brief else None
     earlier = await _fetch("SELECT d.*, p.title FROM daily_papers d JOIN papers p ON p.id = d.paper_id "
                            "WHERE d.day < $1 ORDER BY d.day DESC", date.today())
@@ -522,7 +522,7 @@ async def new_paper_of_the_day(request: Request):
     """{"model"}: a new brief for today, of the next paper (ADR-0024)."""
     body = await _model_body(request, "model")
     try:
-        return {"paper_id": (await daily_paper.write(body.get("model")))["paper_id"]}
+        return {"paper_id": (await questions.write_daily_paper(body.get("model")))["paper_id"]}
     except Exception as e:  # the model server is stopped, the library is empty, or the reply is not valid
         raise HTTPException(503, f"No paper of the day: {e}")
 

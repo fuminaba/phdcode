@@ -25,6 +25,14 @@ answer cites correctly, at most MAX_BONUS. The grader reads the titles and
 ids of the whole library, so a correct citation outside the question's
 papers counts too.
 
+The paper of the day (ADR-0024) is a brief of one library paper for the
+user's PhD defence: what it is about, a summary, the key points to know and
+the questions that an examiner could ask. The paper is one that was featured
+least recently (never featured first), then, of those, one with a methods
+summary (a full-text paper) if one is left, then a tier by TIER_WEIGHTS. The
+brief is written once a day, when the user asks for it; "Another paper"
+replaces it.
+
 The interface chooses the models from models(); the defaults are
 QUESTION_MODEL and GRADE_MODEL. A local model server is the GPU tenant
 (ADR-0017). If it cannot answer (the GPU is cleared for training), ask()
@@ -40,9 +48,8 @@ from typing import Any, Optional
 from .embeddings import embed
 from .generation import SUMMARY_MODEL, generate
 from .memory import get_pool
-from .prompts import chat_prompt, grade_prompt, question_prompt
+from .prompts import chat_prompt, daily_paper_prompt, grade_prompt, question_prompt
 from .routes import ROUTE_NAMES
-from .schemas import GRADE_SCHEMA, QUESTION_SCHEMA
 
 QUESTION_MODEL = os.getenv("QUESTION_MODEL") or SUMMARY_MODEL
 GRADE_MODEL = os.getenv("GRADE_MODEL") or QUESTION_MODEL
@@ -98,6 +105,29 @@ REPEAT_DAYS = 14
 MAX_BONUS = 3
 
 _LIBRARY = "(origin IS NULL OR importance IS NOT NULL) AND title IS NOT NULL AND deleted_at IS NULL"
+# The columns that _paper_text reads.
+_PAPER_FIELDS = "id, title, authors, published_date, abstract, methods_summary, results_summary"
+
+QUESTION_SCHEMA = {
+    "question": (str, ...),
+    "model_answer": (str, ...),
+    "key_points": (list[str], ...),
+    # One flat list; a list for each axis set is accepted too.
+    "tags": (list[str] | dict[str, list[str]], ...),
+}
+
+GRADE_SCHEMA = {
+    "score": (int, ...),
+    "cited_papers": (list[int], ...),
+    "feedback": (str, ...),
+}
+
+DAILY_PAPER_SCHEMA = {
+    "about": (str, ...),
+    "summary": (str, ...),
+    "key_points": (list[str], ...),
+    "examiner_questions": (list[str], ...),
+}
 
 
 def models() -> list[str]:
@@ -124,6 +154,15 @@ def _paper_text(p: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _tier(rows: list[dict[str, Any]]) -> list[int]:
+    """The ids of one tier of rows (id, importance), picked by TIER_WEIGHTS
+    among the tiers that have rows."""
+    tiers: dict[str, list[int]] = {}
+    for r in rows:
+        tiers.setdefault(r["importance"] if r["importance"] in TIER_WEIGHTS else "rest", []).append(r["id"])
+    return tiers[random.choices(list(tiers), [TIER_WEIGHTS[t] for t in tiers])[0]]
+
+
 async def _pick(conn, focus: list[float]) -> list[dict[str, Any]]:
     recent = await conn.fetchval(
         "SELECT coalesce(array_agg(DISTINCT x), '{}') FROM questions, unnest(paper_ids) x "
@@ -132,19 +171,15 @@ async def _pick(conn, focus: list[float]) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError("The library is empty: add papers first.")
     fresh = [r for r in rows if not r["recent"]] or rows
-    tiers = {t: [r["id"] for r in fresh if (r["importance"] if r["importance"] in TIER_WEIGHTS else "rest") == t]
-             for t in TIER_WEIGHTS}
-    tiers = {t: ids for t, ids in tiers.items() if ids}
-    tier = random.choices(list(tiers), [TIER_WEIGHTS[t] for t in tiers])[0]
+    tier = _tier(fresh)
     near = await conn.fetch("SELECT id FROM papers WHERE id = ANY($1) AND concept_embedding IS NOT NULL "
-                            "ORDER BY concept_embedding <=> $2 LIMIT $3", tiers[tier], focus, FOCUS_PAPERS)
-    first = random.choice([r["id"] for r in near] or tiers[tier])
+                            "ORDER BY concept_embedding <=> $2 LIMIT $3", tier, focus, FOCUS_PAPERS)
+    first = random.choice([r["id"] for r in near] or tier)
     ids = [first] + [r["id"] for r in await conn.fetch(
         f"SELECT id FROM papers WHERE {_LIBRARY} AND id <> $1 AND concept_embedding IS NOT NULL "
         "ORDER BY concept_embedding <=> (SELECT concept_embedding FROM papers WHERE id = $1) LIMIT $2",
         first, NEIGHBOURS)]
-    rows = await conn.fetch("SELECT id, title, authors, published_date, abstract, methods_summary, "
-                            "results_summary FROM papers WHERE id = ANY($1)", ids)
+    rows = await conn.fetch(f"SELECT {_PAPER_FIELDS} FROM papers WHERE id = ANY($1)", ids)
     return sorted((dict(r) for r in rows), key=lambda r: ids.index(r["id"]))
 
 
@@ -198,8 +233,7 @@ async def grade(question_id: int, answer: Optional[str] = None, model: Optional[
         q = await conn.fetchrow("SELECT * FROM questions WHERE id = $1", question_id)
         if q is None or not q["answer"]:
             raise LookupError(f"Question {question_id} does not exist or has no answer.")
-        papers = await conn.fetch("SELECT id, title, authors, published_date, abstract, methods_summary, "
-                                  "results_summary FROM papers WHERE id = ANY($1)", q["paper_ids"])
+        papers = await conn.fetch(f"SELECT {_PAPER_FIELDS} FROM papers WHERE id = ANY($1)", q["paper_ids"])
         library = await conn.fetch(f"SELECT id, title, authors, published_date FROM papers WHERE {_LIBRARY} ORDER BY id")
     titles = "\n".join(f"P{r['id']}: {r['title']} ({(r['authors'] or ['?'])[0]} {(r['published_date'] or '')[:4]})"
                        for r in library)
@@ -232,8 +266,7 @@ async def chat(question_id: int, message: str, model: Optional[str] = None) -> s
         q = await conn.fetchrow("SELECT * FROM questions WHERE id = $1", question_id)
         if q is None:
             raise LookupError(f"No question has id {question_id}.")
-        papers = await conn.fetch("SELECT id, title, authors, published_date, abstract, methods_summary, "
-                                  "results_summary FROM papers WHERE id = ANY($1)", q["paper_ids"])
+        papers = await conn.fetch(f"SELECT {_PAPER_FIELDS} FROM papers WHERE id = ANY($1)", q["paper_ids"])
         history = await conn.fetch("SELECT role, content FROM question_chat WHERE question_id = $1 ORDER BY id",
                                    question_id)
     graded = None if q["graded_at"] is None else (
@@ -247,6 +280,44 @@ async def chat(question_id: int, message: str, model: Optional[str] = None) -> s
         await conn.executemany("INSERT INTO question_chat (question_id, role, content, model) VALUES ($1, $2, $3, $4)",
                                [(question_id, "student", message, None), (question_id, "tutor", reply, model)])
     return reply
+
+
+def choose_daily_paper(rows: list[dict[str, Any]]) -> int:
+    """The id of the next paper of the day; rows: id, importance,
+    summarized, last (the last day it was featured, or None)."""
+    if not rows:
+        raise ValueError("The library is empty: add papers first.")
+    oldest = min(r["last"] or date.min for r in rows)
+    rows = [r for r in rows if (r["last"] or date.min) == oldest]
+    rows = [r for r in rows if r["summarized"]] or rows
+    return random.choice(_tier(rows))
+
+
+async def daily_paper() -> Optional[dict[str, Any]]:
+    """Today's brief, or None."""
+    row = await (await get_pool()).fetchrow("SELECT * FROM daily_papers WHERE day = $1", date.today())
+    return dict(row) if row else None
+
+
+async def write_daily_paper(model: Optional[str] = None) -> dict[str, Any]:
+    """A new brief for today, of the next paper; it replaces today's brief."""
+    model = _check_model(model, QUESTION_MODEL)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT p.id, p.importance, p.methods_summary IS NOT NULL AS summarized, "
+            "       (SELECT max(day) FROM daily_papers d WHERE d.paper_id = p.id) AS last "
+            f"FROM papers p WHERE {_LIBRARY}")
+        paper = dict(await conn.fetchrow(f"SELECT {_PAPER_FIELDS} FROM papers WHERE id = $1",
+                                         choose_daily_paper([dict(r) for r in rows])))
+    reply = await asyncio.to_thread(generate, daily_paper_prompt(_paper_text(paper)), model,
+                                    schema=DAILY_PAPER_SCHEMA)
+    return dict(await pool.fetchrow(
+        "INSERT INTO daily_papers (day, paper_id, about, summary, key_points, examiner_questions, model) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (day) DO UPDATE SET paper_id = $2, about = $3, "
+        "summary = $4, key_points = $5, examiner_questions = $6, model = $7, created_at = now() RETURNING *",
+        date.today(), paper["id"], reply["about"], reply["summary"], reply["key_points"],
+        reply["examiner_questions"], model))
 
 
 def stats(rows: list[dict[str, Any]], attempts: list[dict[str, Any]] = (), weeks: int = 26,
@@ -288,7 +359,7 @@ def stats(rows: list[dict[str, Any]], attempts: list[dict[str, Any]] = (), weeks
 
 
 if __name__ == "__main__":
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     t = date(2026, 10, 14)  # a Wednesday
 
@@ -319,4 +390,16 @@ if __name__ == "__main__":
         axis, kind = _weakest(rows, "Field competencies")
         assert axis != "Learning with weak labels" and kind not in ("Explain", "Compare"), (axis, kind)
     assert _weakest(rows, "Exam areas")[0] != "ML foundations"
+    # The paper of the day: never featured first, then a summarized paper: 3 is the only one.
+    d = date(2026, 10, 1)
+    rows = [{"id": 1, "importance": "crucial", "summarized": True, "last": d},
+            {"id": 2, "importance": None, "summarized": False, "last": None},
+            {"id": 3, "importance": None, "summarized": True, "last": None},
+            {"id": 4, "importance": "crucial", "summarized": False, "last": None}]
+    assert {choose_daily_paper(rows) for _ in range(20)} == {3}
+    # With no summarized paper left among the oldest, the crucial tier mostly.
+    picks = [choose_daily_paper(rows[:2] + rows[3:]) for _ in range(200)]
+    assert set(picks) == {2, 4} and picks.count(4) > picks.count(2), picks.count(4)
+    # All featured: the least recent.
+    assert choose_daily_paper([{**rows[0], "last": d}, {**rows[2], "last": date(2026, 9, 1)}]) == 3
     print("ok")

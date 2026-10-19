@@ -18,8 +18,21 @@ from typing import Any, Optional
 from .generation import generate
 from .memory import get_pool
 from .prompts import writing_prompt_prompt, writing_review_prompt
-from .questions import GRADE_MODEL, QUESTION_MODEL, _LIBRARY, _check_model, _paper_text
-from .schemas import WRITING_PROMPT_SCHEMA, WRITING_REVIEW_SCHEMA
+from .questions import GRADE_MODEL, QUESTION_MODEL, _LIBRARY, _PAPER_FIELDS, _check_model, _paper_text
+
+WRITING_PROMPT_SCHEMA = {
+    "prompt": (str, ...),
+    "audience": (str, ...),
+    "max_words": (int, ...),
+}
+
+WRITING_REVIEW_SCHEMA = {
+    "scores": (dict[str, int], ...),
+    "strengths": (str, ...),
+    "improvements": (list[str], ...),
+    "edits": (list[dict[str, str]], ...),
+    "revision": (str, ...),
+}
 
 KINDS = {
     "Plain-language summary": "explain a finding to a reader with no science background, such as a patient",
@@ -72,8 +85,7 @@ async def ask(kind: Optional[str] = None, model: Optional[str] = None) -> dict[s
             "SELECT p.kind FROM writing_attempts a JOIN writing_prompts p ON p.id = a.prompt_id")])
         # ponytail: any summarized library paper at random; steer by importance if the subjects repeat.
         paper = await conn.fetchrow(
-            "SELECT id, title, authors, published_date, abstract, methods_summary, results_summary FROM papers "
-            f"WHERE {_LIBRARY} ORDER BY methods_summary IS NULL, random() LIMIT 1")
+            f"SELECT {_PAPER_FIELDS} FROM papers WHERE {_LIBRARY} ORDER BY methods_summary IS NULL, random() LIMIT 1")
     if paper is None:
         raise ValueError("The library is empty: add papers first.")
     reply = await asyncio.to_thread(generate, writing_prompt_prompt(f"{kind}: {KINDS[kind]}", _paper_text(dict(paper))),
