@@ -85,7 +85,7 @@ def _extract(path: Path) -> tuple[str, dict]:
 def _markdown_table_to_dataframe(markdown_table: str):
     """Parses one markdown table (header, separator, data rows) into a
     polars DataFrame. Adapted from a prior project's marker-pdf pipeline
-    (~/Desktop/dev/ALiRA/core/document_processor/services/marker_pdf2md.py)."""
+    (ALiRA: core/document_processor/services/marker_pdf2md.py)."""
     import polars as pl
 
     raw_lines = markdown_table.strip().split("\n")

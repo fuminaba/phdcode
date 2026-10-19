@@ -24,6 +24,7 @@ phdcode reads its settings from `.env` at the root of the repository. A variable
 | `EMBEDDING_DIM` | `768` | The dimension of the embeddings. It must match `EMBEDDING_MODEL`. A change needs new embeddings for all papers. |
 | `QUESTION_MODEL` | `SUMMARY_MODEL` | The default model that writes the daily questions and their model answers (ADR-0020); the page Questions can choose another route of `LLM_ROUTING`, local or hosted. |
 | `GRADE_MODEL` | `QUESTION_MODEL` | The default model that grades the answers; the page can choose another. |
+| `SYSONE_DIR`, `SYSONE_PYTHON` | none | The absolute paths of the repository of the System One head and of the Python that runs it (ADR-0028). With none, `phdcode headscore` scores nothing. |
 | `TRIAGE_MODEL` | `SUMMARY_MODEL` | The LLM that judges each hit of the sweep: does the student with this library want it? If its server cannot answer (the GPU is cleared for training), the hits wait for the next sweep. |
 
 ## Chunks
@@ -48,4 +49,20 @@ After a change to the chunk settings, run `phdcode rechunk`.
 
 | Variable | Default | What it sets |
 | --- | --- | --- |
-| `DASHBOARD_URL` | the server's address, port 8620 | The address of the interface. The MCP tools use it for the links to figures. |
+| `DASHBOARD_URL` | `http://localhost:8620` | The address of the interface. The MCP tools use it for the links to figures. |
+| `UVICORN_HOST` | `127.0.0.1` | The address where the interface listens. The interface has no login: use a private address only, for example the Tailscale address. |
+
+## The systemd units
+
+The units in `llm_engine/systemd/` read `.env` through the link `~/.config/phdcode/env`, because the path of a unit file cannot come from a variable. Make the link once:
+
+```bash
+mkdir -p ~/.config/phdcode && ln -s <repo>/.env ~/.config/phdcode/env
+```
+
+| Variable | Default | What it sets |
+| --- | --- | --- |
+| `PHDCODE_ENV` | none (required) | The absolute path of the Python environment where phdcode is installed, for example `/home/<user>/miniconda3/envs/phdcode`. |
+| `LLAMA_SERVER_BIN` | none | The absolute path of the `llama-server` program (`phdcode-llm.service`). |
+| `LLAMA_MODELS_PRESET` | none | The absolute path of the models preset file of `llama-server`. |
+| `LLAMA_VRAM_MIB` | none | The free VRAM, in MiB, that the local model needs. `llama-server` does not start with less. |

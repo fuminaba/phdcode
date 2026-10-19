@@ -5,16 +5,18 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-# The phdcode command of the Python environment where phdcode is installed.
+# The phdcode command of the Python environment where phdcode is installed
+# (PHDCODE_ENV in .env).
 # The PDF queue first (its parses use the GPU while llama-server is stopped),
 # then the sweep (triage starts llama-server through its socket, ADR-0018),
 # then the shadow score of the System One head (ADR-0028: it stops llama-server
 # for about a minute), then the pending summaries (llama-server starts again),
 # then the backup. "-":
 # the next step runs also if a step fails.
-ExecStart=-%h/miniconda3/envs/alira/bin/phdcode ingest
-ExecStart=-%h/miniconda3/envs/alira/bin/phdcode sweep
-ExecStart=-%h/miniconda3/envs/alira/bin/phdcode headscore
-ExecStart=-%h/miniconda3/envs/alira/bin/phdcode summarize
-ExecStart=%h/miniconda3/envs/alira/bin/phdcode backup
+EnvironmentFile=%E/phdcode/env
+ExecStart=-/bin/sh -c 'exec ${PHDCODE_ENV}/bin/phdcode ingest'
+ExecStart=-/bin/sh -c 'exec ${PHDCODE_ENV}/bin/phdcode sweep'
+ExecStart=-/bin/sh -c 'exec ${PHDCODE_ENV}/bin/phdcode headscore'
+ExecStart=-/bin/sh -c 'exec ${PHDCODE_ENV}/bin/phdcode summarize'
+ExecStart=/bin/sh -c 'exec ${PHDCODE_ENV}/bin/phdcode backup'
 Nice=10

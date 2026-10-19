@@ -27,12 +27,15 @@ load_dotenv()
 
 log = logging.getLogger(__name__)
 
-SYSONE_DIR = Path(os.getenv("SYSONE_DIR", "~/Desktop/dev/bonsai2-sysone")).expanduser()
-SYSONE_PYTHON = Path(os.getenv("SYSONE_PYTHON", "~/miniconda3/envs/vihc-blackwell/bin/python")).expanduser()
+# The System One head (ADR-0028): its repository and the Python that runs it.
+SYSONE_DIR = os.getenv("SYSONE_DIR")
+SYSONE_PYTHON = os.getenv("SYSONE_PYTHON")
 
 
 async def headscore() -> str:
     """Scores each unscored hit; returns one line for the log."""
+    if not (SYSONE_DIR and SYSONE_PYTHON):
+        return "headscore: SYSONE_DIR and SYSONE_PYTHON are not set in .env; no hits scored"
     await init_schema()
     try:
         if os.path.exists(gpu.GPU_CLEARED):
@@ -49,7 +52,7 @@ async def headscore() -> str:
             Path(tmp, "in.json").write_text(json.dumps(request))
             gpu.clear()
             try:
-                subprocess.run([str(SYSONE_PYTHON), "score_triage.py", f"{tmp}/in.json", f"{tmp}/out.json"],
+                subprocess.run([SYSONE_PYTHON, "score_triage.py", f"{tmp}/in.json", f"{tmp}/out.json"],
                                cwd=SYSONE_DIR, env={**os.environ, "PYTHONPATH": "."}, check=True)
             finally:
                 gpu.restore()

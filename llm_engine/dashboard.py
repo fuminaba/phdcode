@@ -1,6 +1,6 @@
 """The phdcode interface: a web page of what phdcode holds and runs.
 
-    uvicorn llm_engine.dashboard:app --host 100.110.224.47 --port 8620
+    uvicorn llm_engine.dashboard:app --host <tailscale-ip> --port 8620
 
 phdcode-dashboard.service runs it on the Tailscale address only, so it has
 no login. It reads Postgres, the paper folders, the digests, the systemd
