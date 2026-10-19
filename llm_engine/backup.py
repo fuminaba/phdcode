@@ -14,6 +14,7 @@ container (POSTGRES_CONTAINER).
 """
 import gzip
 import os
+import re
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -21,6 +22,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .documents import PAPERS_DIR
+from .memory.db import SCHEMA_PATH
 
 load_dotenv()
 
@@ -28,7 +30,9 @@ BACKUP_REMOTE = os.getenv("BACKUP_REMOTE", "").rstrip("/")
 POSTGRES_CONTAINER = os.getenv("POSTGRES_CONTAINER", "alira2-postgres-1")
 DUMP_DIR = PAPERS_DIR.parent / "backup"
 DUMPS_KEPT = 7
-TABLES = ("papers", "keywords", "paper_keywords", "chunks", "saved_searches", "triaged_hits")
+# The phdcode tables, from schema.sql: the database also holds the tables of
+# the old general assistant (ADR-0015), which the dump leaves out.
+TABLES = re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", SCHEMA_PATH.read_text())
 
 
 def dump() -> Path:

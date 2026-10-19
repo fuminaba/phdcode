@@ -76,16 +76,5 @@ nav:
   - Reference:
       - MCP tools: reference/tools.md
       - The phdcode command: reference/cli.md
-  - Decisions:
-      - All decisions: adr/README.md
-      - "ADR 0006: tools and libraries": adr/0006-capability-split-tools-vs-libraries.md
-      - "ADR 0014: the phdcode repository": adr/0014-new-repository-phdcode.md
-      - "ADR 0015: a literature RAG tool": adr/0015-rescope-to-literature-rag-tool.md
-      - "ADR 0016: the MCP server": adr/0016-mcp-server-is-the-only-integration.md
-      - "ADR 0017: the GPU policy": adr/0017-gpu-main-slot.md
-      - "ADR 0018: triage by the library": adr/0018-triage-by-the-library.md
-      - "ADR 0019: the importance of a paper": adr/0019-importance-of-a-paper.md
-      - "ADR 0020: daily questions": adr/0020-daily-question.md
-      - "ADR 0021: questions steered by competency": adr/0021-questions-steered-by-competency.md
-      - "ADR 0022: answer again, score history": adr/0022-answer-again-with-score-history.md
-      - "ADR 0023: tutor chat": adr/0023-tutor-chat.md
+  # adr/README.md links each ADR, so the nav does not list them again.
+  - Decisions: adr/README.md
