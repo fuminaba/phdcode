@@ -9,7 +9,7 @@ flowchart LR
   subgraph you["You"]
     CC["Claude Code<br/>model: Claude"]
     DC["dcode<br/>model: Bonsai 2 27B"]
-    UI["The interface<br/>web page; the importance,<br/>the daily question"]
+    UI["The interface<br/>web page; the importance,<br/>the daily question,<br/>the paper of the day, writing"]
     CLI["The phdcode command<br/>import, queue, ingest,<br/>summarize, rechunk, backup"]
   end
   subgraph phd["phdcode on the server"]

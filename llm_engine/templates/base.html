@@ -56,8 +56,34 @@ summary { cursor: pointer; }
 .md table { width: auto; }
 input[type=search] { width: 100%; max-width: 420px; padding: 7px 10px; border: 1px solid var(--line);
   border-radius: 6px; background: var(--panel); color: var(--text); margin-bottom: 10px; }
+/* The forms of the study pages: questions, paper of the day, writing. */
+textarea { width: 100%; min-height: 160px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--text); font: inherit; }
+select { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--text); }
+button.go { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--panel); cursor: pointer; }
+button.alt { background: none; color: var(--accent); }
+button.go:disabled { opacity: .6; cursor: wait; }
+.models { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 10px; font-size: 14px; }
+[hidden] { display: none !important; }
 .mermaid { background: #fff; border-radius: 8px; padding: 10px; overflow-x: auto; }
 </style>
+<script>
+// A button of a study page that calls a model: all buttons wait; then the page
+// goes to next (or reloads), or the .msg beside the button shows the error.
+async function post(button, url, body, next) {
+  const label = button.textContent;
+  const msg = button.parentElement.querySelector(".msg");
+  document.querySelectorAll("button.go").forEach(b => b.disabled = true);
+  button.textContent = "The model is working…";
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (r.ok) return next ? location.assign(next) : location.reload();
+  msg.textContent = (await r.json()).detail || `HTTP ${r.status}`;
+  document.querySelectorAll("button.go").forEach(b => b.disabled = false);
+  button.textContent = label;
+}
+</script>
 {% block head %}{% endblock %}
 </head>
 <body>
@@ -69,6 +95,8 @@ input[type=search] { width: 100%; max-width: 420px; padding: 7px 10px; border: 1
   <a href="/papers" class="{{ 'on' if here.startswith('/papers') }}">Papers</a>
   <a href="/digests" class="{{ 'on' if here.startswith('/digests') }}">Digests</a>
   <a href="/questions" class="{{ 'on' if here.startswith('/questions') }}">Questions</a>
+  <a href="/paper-of-the-day" class="{{ 'on' if here.startswith('/paper-of-the-day') }}">Paper of the day</a>
+  <a href="/writing" class="{{ 'on' if here.startswith('/writing') }}">Writing</a>
   <a href="/how" class="{{ 'on' if here.startswith('/how') }}">How it works</a>
 </header>
 <main>

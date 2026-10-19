@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ _pool: asyncpg.Pool | None = None
 async def _init_connection(conn: asyncpg.Connection) -> None:
     await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
     await register_vector(conn)
+    await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
 
 async def get_pool() -> asyncpg.Pool:

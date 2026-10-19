@@ -114,6 +114,48 @@ INSERT INTO attempts (question_id, answer, answered_at, score, bonus, cited, fee
 SELECT id, answer, answered_at, score, bonus, cited, feedback, grade_model, graded_at FROM questions q
 WHERE graded_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.question_id = q.id);
 
+-- The paper of the day (ADR-0024): one brief for each day, of one library
+-- paper, written by a model for the user's PhD defence. A new paper on the
+-- same day replaces the brief.
+CREATE TABLE IF NOT EXISTS daily_papers (
+    day DATE PRIMARY KEY,
+    paper_id BIGINT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    about TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    key_points TEXT[] NOT NULL,
+    examiner_questions TEXT[] NOT NULL,
+    model TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- The writing coach (ADR-0025): a prompt for one or two paragraphs, of one
+-- kind of writing (writing.KINDS), and each answer with its review. scores
+-- maps each criterion (writing.CRITERIA) to 0 to 10; edits is a list of
+-- objects with the keys before, after and why.
+CREATE TABLE IF NOT EXISTS writing_prompts (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    asked_on DATE NOT NULL,
+    kind TEXT NOT NULL,
+    paper_id BIGINT REFERENCES papers(id) ON DELETE SET NULL,
+    prompt TEXT NOT NULL,
+    audience TEXT NOT NULL,
+    max_words INT NOT NULL,
+    model TEXT
+);
+CREATE TABLE IF NOT EXISTS writing_attempts (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    prompt_id BIGINT NOT NULL REFERENCES writing_prompts(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    scores JSONB NOT NULL,
+    strengths TEXT NOT NULL,
+    improvements TEXT[] NOT NULL,
+    edits JSONB NOT NULL,
+    revision TEXT NOT NULL,
+    model TEXT,
+    graded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS writing_attempts_prompt_idx ON writing_attempts (prompt_id);
+
 CREATE INDEX IF NOT EXISTS papers_concept_embedding_idx
     ON papers USING hnsw (concept_embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS papers_methods_embedding_idx
