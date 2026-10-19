@@ -8,10 +8,12 @@ StopWhenUnneeded=yes
 
 [Service]
 ExecCondition=/bin/sh -c '! test -e /tmp/gpu.cleared'
-# The paths of the phdcode env, the llama.cpp build and the presets. The
+# The paths of the phdcode env, the llama.cpp build and the presets, and the
+# VRAM that the model needs, come from .env (see phdcode-sweep.timer). The
 # shell takes the lock on fd 9 and execs llama-server, which keeps fd 9: so
 # llama-server is the main process and holds the lock until it exits.
-ExecStart=/bin/sh -c 'exec 9>>/tmp/gpu.lock && flock 9 && %h/miniconda3/envs/alira/bin/phdcode gpu check 14500 && exec %h/Desktop/dev/llama.cpp-prism/build/bin/llama-server --models-preset %h/models/alira-models.ini --models-max 1 --host 127.0.0.1 --port 8081'
+EnvironmentFile=%E/phdcode/env
+ExecStart=/bin/sh -c 'exec 9>>/tmp/gpu.lock && flock 9 && ${PHDCODE_ENV}/bin/phdcode gpu check ${LLAMA_VRAM_MIB} && exec ${LLAMA_SERVER_BIN} --models-preset ${LLAMA_MODELS_PRESET} --models-max 1 --host 127.0.0.1 --port 8081'
 # Ready when the model is loaded; give up if llama-server exits first.
 ExecStartPost=/bin/sh -c 'until curl -s http://127.0.0.1:8081/models | grep -q "\\"value\\":\\"loaded\\""; do kill -0 $MAINPID || exit 1; sleep 2; done'
 TimeoutStartSec=600

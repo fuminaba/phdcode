@@ -5,7 +5,7 @@ You can ask an agent to do each task on this page. Claude Code and dcode both ca
 Activate the environment of phdcode before you run a command:
 
 ```bash
-conda activate alira
+conda activate phdcode
 ```
 
 ## Connect a harness
@@ -24,7 +24,7 @@ claude mcp add -s user phdcode -- <env>/bin/phdcode-mcp
 {"mcpServers": {"phdcode": {"command": "<env>/bin/phdcode-mcp"}}}
 ```
 
-`<env>` is the folder of the conda environment, for example `~/miniconda3/envs/alira`. Headless dcode (`dcode -n`) can run only the tools that do not write, because it has no approval prompt. Use the dcode TUI to add papers.
+`<env>` is the folder of the conda environment, for example `~/miniconda3/envs/phdcode`. Headless dcode (`dcode -n`) can run only the tools that do not write, because it has no approval prompt. Use the dcode TUI to add papers.
 
 ## Ask a question
 

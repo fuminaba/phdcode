@@ -1,5 +1,10 @@
 # Runs phdcode-sweep.service daily at 06:00, or at the next start of the
-# machine if it was off at 06:00. Install as a user unit:
+# machine if it was off at 06:00. Install as a user unit.
+#
+# The units read .env of the repository through ~/.config/phdcode/env (the
+# path of a unit file cannot come from a variable). Make that link once:
+#
+#   mkdir -p ~/.config/phdcode && ln -s <repo>/.env ~/.config/phdcode/env
 #
 #   systemctl --user link <repo>/llm_engine/systemd/phdcode-sweep.service
 #   systemctl --user enable --now <repo>/llm_engine/systemd/phdcode-sweep.timer

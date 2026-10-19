@@ -1,20 +1,20 @@
-# The phdcode interface (llm_engine/dashboard.py): a web page on the
-# Tailscale address only, so it needs no login. It writes the importance of a
-# paper (ADR-0019) and the daily question (ADR-0020).
+# The phdcode interface (llm_engine/dashboard.py). It has no login, so it
+# listens on UVICORN_HOST from .env: 127.0.0.1 if unset, or a private address
+# such as Tailscale. It writes the importance of a paper (ADR-0019) and the
+# daily question (ADR-0020). The paths come from .env (see phdcode-sweep.timer).
 #
-#   systemctl --user link ~/Desktop/dev/phdcode/llm_engine/systemd/phdcode-dashboard.service
+#   systemctl --user link <repo>/llm_engine/systemd/phdcode-dashboard.service
 #   systemctl --user enable --now phdcode-dashboard.service
 #
-# Open http://100.110.224.47:8620 from a device on the tailnet. At boot, the
-# Tailscale address can come after this unit: the bind then fails, and the
-# unit tries again after 30 s.
+# Open http://<UVICORN_HOST>:8620. At boot, the Tailscale address can come
+# after this unit: the bind then fails, and the unit tries again after 30 s.
 [Unit]
 Description=phdcode interface (web page)
 After=network-online.target
 
 [Service]
-WorkingDirectory=%h/Desktop/dev/phdcode
-ExecStart=%h/miniconda3/envs/alira/bin/uvicorn llm_engine.dashboard:app --host 100.110.224.47 --port 8620
+EnvironmentFile=%E/phdcode/env
+ExecStart=/bin/sh -c 'exec ${PHDCODE_ENV}/bin/uvicorn llm_engine.dashboard:app --port 8620'
 Restart=on-failure
 RestartSec=30
 

@@ -2,7 +2,7 @@
 
 Any MCP client starts it over stdio, for example:
 
-    claude mcp add phdcode -- ~/miniconda3/envs/alira/bin/phdcode-mcp
+    claude mcp add phdcode -- <env>/bin/phdcode-mcp
 
 stdout carries the protocol, so nothing in this process prints: logging goes
 to stderr, and the PDF parse runs in a subprocess (documents.py).
@@ -50,7 +50,7 @@ from .memory import (
 log = logging.getLogger(__name__)
 
 # The phdcode interface (dashboard.py), for the links to figures.
-DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://100.110.224.47:8620")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:8620")
 _FIGURE = re.compile(r"!\[[^\]]*\]\(([^)/]+)\)")
 
 INSTRUCTIONS = """\
