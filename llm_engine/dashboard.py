@@ -382,7 +382,7 @@ async def labels(request: Request):
     newest first; the unlabelled hits in their own table."""
     hits = await _fetch(
         "SELECT t.saved_search_id, t.source_id, t.probability, t.triaged_at, t.label, t.labelled_at, "
-        "       coalesce(t.title, p.title) AS title, coalesce(t.abstract, p.abstract) AS abstract, t.url, "
+        "       coalesce(t.title, p.title) AS title, coalesce(t.abstract, p.abstract) AS abstract, t.url, t.head_probability, "
         "       s.source, s.threshold, s.interest, p.id AS paper_id "
         "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
         "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
@@ -394,7 +394,9 @@ async def labels(request: Request):
     return _page(request, "labels.html", todo=[h for h in hits if h["label"] is None], labelled=labelled,
                  relevant=sum(h["label"] for h in labelled),
                  agree=sum(h["guess"] == h["label"] for h in labelled),
-                 auc=_auc([(h["probability"], h["label"]) for h in labelled]))
+                 auc=_auc([(h["probability"], h["label"]) for h in labelled]),
+                 head_auc=_auc([(h["head_probability"], h["label"]) for h in labelled if h["head_probability"] is not None]),
+                 head_n=sum(h["head_probability"] is not None for h in labelled))
 
 
 @app.post("/labels/{saved_search_id}/{source_id:path}")

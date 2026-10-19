@@ -113,6 +113,10 @@ judges it for that saved search.
 **Label** — the user's judgement of a judged hit: relevant or not relevant
 to its saved search. The labels test triage; they do not feed it (ADR-0027).
 
+**Shadow score** — the probability that the System One head of
+bonsai2-sysone gives a judged hit, stored beside the probability of triage;
+it decides nothing (ADR-0028).
+
 **Sweep** — one pass over all saved searches that collects new hits, triages
 them, stores the relevant ones as abstract-only papers, and writes a digest.
 

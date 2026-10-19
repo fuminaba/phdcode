@@ -8,7 +8,7 @@ These were produced in a single design session on 2026-09-22, after the system
 had grown to three loosely-related parts (ALiRA2, dcode, MedGemma) and the
 stated problem was *conceptual*: no one-sentence answer to "what lives where".
 ADR-0015 (2026-10-10) rescoped the project to a literature RAG tool and
-superseded most of them. Read 0006 and 0014 to 0027 for the current design.
+superseded most of them. Read 0006 and 0014 to 0028 for the current design.
 
 | # | Decision | Status |
 |---|----------|--------|
@@ -39,6 +39,7 @@ superseded most of them. Read 0006 and 0014 to 0027 for the current design.
 | [0025](0025-writing-coach.md) | A writing coach in the interface | Accepted |
 | [0026](0026-notes-read-mark-and-bin.md) | Notes, a read mark and a bin for each paper | Accepted |
 | [0027](0027-label-every-judged-hit.md) | The user labels every judged hit | Accepted |
+| [0028](0028-data-for-system-one-heads.md) | Data for System One heads: a shadow score of triage and a log of tool calls | Accepted |
 
 An ADR is valid while its premises are true. To re-open one, name the premise
 that changed, and supersede it in a new ADR. Edit only the status line of the

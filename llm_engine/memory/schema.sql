@@ -261,3 +261,19 @@ ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS abstract TEXT;
 ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS url TEXT;
 ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS label BOOLEAN;
 ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS labelled_at TIMESTAMPTZ;
+-- The shadow score of the System One head (ADR-0028): P(yes) beside the
+-- probability of triage; it decides nothing yet.
+ALTER TABLE triaged_hits ADD COLUMN IF NOT EXISTS head_probability REAL;
+
+-- Each call of a phdcode MCP tool (ADR-0028): which tool an agent chose, with
+-- what arguments, and whether it worked. Training data for a tool-choice head
+-- (bonsai2-sysone), joined with the agent's transcripts by time.
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tool TEXT NOT NULL,
+    arguments JSONB NOT NULL,
+    ok BOOLEAN NOT NULL,
+    error TEXT,
+    ms INTEGER NOT NULL,
+    called_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -17,6 +17,8 @@ from .db import (
     pending_papers,
     queue_pdf,
     queued_pdfs,
+    record_head_probabilities,
+    record_tool_call,
     record_triage,
     save_paper,
     search_chunks,
@@ -25,6 +27,7 @@ from .db import (
     set_full_text,
     set_pdf_error,
     triaged_source_ids,
+    unscored_hits,
     update_paper_metadata,
 )
 from .document_index import (
@@ -67,6 +70,8 @@ __all__ = [
     "queue_local_pdfs",
     "queue_pdf",
     "queued_pdfs",
+    "record_head_probabilities",
+    "record_tool_call",
     "record_triage",
     "rechunk",
     "run_pending_steps",
@@ -79,5 +84,6 @@ __all__ = [
     "set_pdf_error",
     "summarize_full_text",
     "triaged_source_ids",
+    "unscored_hits",
     "update_paper_metadata",
 ]

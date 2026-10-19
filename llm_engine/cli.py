@@ -42,6 +42,7 @@ def main() -> None:
     ingest = commands.add_parser("ingest", help="parse each PDF in the queue; then run phdcode summarize")
     ingest.add_argument("--limit", type=int, help="parse at most this many PDFs")
     commands.add_parser("summarize", help="make the pending summaries through SUMMARY_MODEL")
+    commands.add_parser("headscore", help="the shadow score of the System One head for each judged hit (ADR-0028)")
     rechunk = commands.add_parser("rechunk", help="index the parsed text of the full-text papers again (no parse)")
     rechunk.add_argument("paper_ids", type=int, nargs="*", help="only these papers")
     commands.add_parser("backup", help="dump the tables; copy the papers and the dumps to BACKUP_REMOTE")
@@ -77,6 +78,9 @@ def main() -> None:
     elif args.command == "rechunk":
         from .memory import rechunk
         print("\n".join(asyncio.run(_with_db(rechunk(args.paper_ids or None)))) or "No full-text papers.")
+    elif args.command == "headscore":
+        from .headscore import headscore
+        print(asyncio.run(headscore()))
     elif args.command == "backup":
         from .backup import backup
         print("\n".join(backup()))

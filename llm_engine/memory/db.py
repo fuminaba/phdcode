@@ -498,6 +498,35 @@ async def record_triage(saved_search_id: int, hit: dict[str, Any], probability: 
         )
 
 
+async def unscored_hits() -> list[dict[str, Any]]:
+    """The judged hits with a title and no shadow score of the head (ADR-0028)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT t.saved_search_id, t.source_id, coalesce(t.title, p.title) AS title, "
+            "       coalesce(t.abstract, p.abstract) AS abstract "
+            "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
+            "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
+            "WHERE t.head_probability IS NULL AND coalesce(t.title, p.title) IS NOT NULL")
+    return [dict(r) for r in rows]
+
+
+async def record_head_probabilities(scores: list[tuple[int, str, float]]) -> None:
+    """(saved_search_id, source_id, P(yes)) of the head for each hit (ADR-0028)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.executemany("UPDATE triaged_hits SET head_probability = $3 WHERE saved_search_id = $1 AND source_id = $2",
+                               scores)
+
+
+async def record_tool_call(tool: str, arguments: dict[str, Any], ok: bool, error: Optional[str], ms: int) -> None:
+    """Stores one call of an MCP tool (ADR-0028)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO tool_calls (tool, arguments, ok, error, ms) VALUES ($1, $2, $3, $4, $5)",
+                           tool, arguments, ok, error, ms)
+
+
 async def mark_swept(saved_search_id: int) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
