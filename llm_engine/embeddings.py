@@ -4,10 +4,7 @@ import urllib.request
 
 from dotenv import load_dotenv
 
-try:
-    from .routes import resolve
-except ImportError:
-    from routes import resolve
+from .routes import resolve
 
 load_dotenv()
 
