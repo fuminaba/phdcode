@@ -115,7 +115,7 @@ async def get_paper(paper_id: int) -> Optional[dict[str, Any]]:
         row = await conn.fetchrow(
             "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
             "       p.doi, p.url, p.pdf_url, p.abstract, p.methods_summary, p.results_summary, "
-            "       p.parse_mode, p.importance, "
+            "       p.parse_mode, p.importance, p.notes, p.read_at, p.deleted_at, "
             "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks, "
             "       COALESCE(("
             "           SELECT array_agg(k.word ORDER BY k.word) FROM paper_keywords pk "
@@ -141,7 +141,8 @@ async def library_titles() -> list[str]:
     library that triage reads (ADR-0018)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT title FROM papers WHERE origin IS NULL AND title IS NOT NULL ORDER BY id")
+        rows = await conn.fetch("SELECT title FROM papers WHERE origin IS NULL AND title IS NOT NULL AND deleted_at IS NULL "
+                                "ORDER BY id")
     return [row["title"] for row in rows]
 
 
@@ -180,7 +181,7 @@ async def full_text_papers(paper_ids: Optional[Sequence[int]] = None) -> list[di
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, parse_mode, pdf_path, text_path FROM papers "
-            "WHERE parse_mode IS NOT NULL AND ($1::bigint[] IS NULL OR id = ANY($1)) ORDER BY id",
+            "WHERE parse_mode IS NOT NULL AND deleted_at IS NULL AND ($1::bigint[] IS NULL OR id = ANY($1)) ORDER BY id",
             None if paper_ids is None else list(paper_ids),
         )
     return [dict(row) for row in rows]
@@ -201,7 +202,7 @@ async def queued_pdfs() -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, source_id, pdf_source FROM papers "
-            "WHERE pdf_source IS NOT NULL AND parse_mode IS NULL AND pdf_error IS NULL ORDER BY id"
+            "WHERE pdf_source IS NOT NULL AND parse_mode IS NULL AND pdf_error IS NULL AND deleted_at IS NULL ORDER BY id"
         )
     return [dict(row) for row in rows]
 
@@ -324,7 +325,7 @@ async def pending_papers() -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT id, text_path, (source IS NULL AND title IS NULL) AS needs_metadata FROM papers "
-            "WHERE parse_mode IS NOT NULL "
+            "WHERE parse_mode IS NOT NULL AND deleted_at IS NULL "
             "AND (methods_summary IS NULL OR results_summary IS NULL OR (source IS NULL AND title IS NULL)) "
             "ORDER BY id"
         )
@@ -378,7 +379,7 @@ async def search_papers(
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            _rrf_cte("papers", f"{facet}_embedding", f"{facet}_tsv")
+            _rrf_cte("papers", f"{facet}_embedding", f"{facet}_tsv", "deleted_at IS NULL")
             + f"SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
             f"       p.doi, p.url, p.parse_mode, p.{_FACET_TEXT[facet]} AS text, f.score, "
             f"       COALESCE(("
@@ -412,7 +413,8 @@ async def search_chunks(
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
         rows = await conn.fetch(
-            _rrf_cte("chunks", "embedding", "search_vector", "($6::bigint[] IS NULL OR paper_id = ANY($6))")
+            _rrf_cte("chunks", "embedding", "search_vector", "($6::bigint[] IS NULL OR paper_id = ANY($6)) "
+                     "AND paper_id NOT IN (SELECT id FROM papers WHERE deleted_at IS NOT NULL)")
             + "SELECT c.paper_id, p.title, c.chunk_index, c.page_start, c.page_end, c.section, c.content, "
             f"{_LINKS_OF_CHUNK} AS links, f.score "
             "FROM fused f JOIN chunks c ON c.id = f.id JOIN papers p ON p.id = c.paper_id "

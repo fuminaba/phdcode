@@ -54,6 +54,17 @@ ALTER TABLE papers ADD COLUMN IF NOT EXISTS origin TEXT;
 -- weakest first; NULL: not set (ADR-0019).
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS importance TEXT
     CHECK (importance IN ('interesting', 'recommended', 'crucial'));
+-- The user's own notes on a paper, and when the user marked it read; NULL:
+-- not read (ADR-0026).
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS notes TEXT;
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+-- The bin (ADR-0026): a deleted paper keeps its row, but leaves the lists,
+-- the search, the queues and the study pages. The interface deletes it for
+-- good after the bin days (settings 'bin_days', default 30). The lookups
+-- (find_paper and others) still see it, so that the sweep does not save it
+-- again.
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 -- The daily question (ADR-0020): one row for each question that the user
 -- asks for; a question with no answer was skipped. asked_on is the local

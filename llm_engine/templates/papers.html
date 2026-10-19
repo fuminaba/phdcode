@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Papers · phdcode{% endblock %}
+{# The table has 11 columns: it uses the full width of the window. #}
+{% block head %}<style>main { max-width: none; }</style>{% endblock %}
 {% block main %}
 <h1>Papers <span class="muted">({{ papers|length }})</span></h1>
 <input type="search" id="filter" placeholder="Filter by title, author, source, state or importance">
-<div class="muted" style="margin:-4px 0 8px">Click a column heading to sort; click it again to reverse.</div>
+<div class="muted" style="margin:-4px 0 8px">Click a column heading to sort; click it again to reverse. Deleted papers are in the <a href="/bin">bin</a>.</div>
 <div class="scroll"><table id="papers">
-<tr><th>Id</th><th>Title</th><th>Authors</th><th>Date</th><th>Source</th><th>State</th><th>Importance</th><th>Chunks</th><th>Added</th></tr>
+<tr><th>Id</th><th>Title</th><th>Authors</th><th>Date</th><th>Source</th><th>State</th><th>Importance</th><th>Read</th><th>Chunks</th><th>Added</th><th></th></tr>
 {% for p in papers %}
 <tr data-authors="{{ p.authors|join(' ') }}">
   <td>{{ p.id }}</td>
@@ -15,14 +17,23 @@
   <td>{% set url = source_url(p.source, p.source_id) %}{% if url %}<a href="{{ url }}">{{ p.source }}:{{ p.source_id }}</a>{% else %}local PDF{% endif %}</td>
   <td><span class="tag {{ 'ok' if p.state == 'full text' else 'bad' if p.state == 'PDF failed' else 'warn' if 'pending' in p.state or 'queued' in p.state else '' }}">{{ p.state }}</span></td>
   <td data-key="{{ importance_levels.index(p.importance) + 1 if p.importance else 0 }}">{% if p.importance %}<span class="tag imp imp-{{ p.importance }} on">{{ p.importance }}</span>{% endif %}</td>
+  <td data-key="{{ 1 if p.read_at else 0 }}">{% if p.read_at %}<span class="tag ok" title="{{ p.read_at|when }}">read</span>{% endif %}</td>
   <td>{{ p.chunks }}</td>
   <td>{{ p.created_at|when }}</td>
+  <td><button type="button" class="tag delete" value="{{ p.id }}" title="Move to the bin">Delete</button></td>
 </tr>
 {% else %}
-<tr><td colspan="9" class="muted">No papers yet.</td></tr>
+<tr><td colspan="11" class="muted">No papers yet.</td></tr>
 {% endfor %}
 </table></div>
 <script>
+// Delete asks first; the paper goes to the bin, which can restore it.
+document.querySelectorAll("button.delete").forEach(b => b.addEventListener("click", async () => {
+  const title = b.closest("tr").cells[1].querySelector("a").textContent;
+  if (!confirm(`Move "${title}" to the bin?\n\nYou can restore it from the bin for {{ days }} days. After that, it is deleted for good.`)) return;
+  const r = await fetch(`/papers/${b.value}/bin`, {method: "POST"});
+  if (r.ok) b.closest("tr").remove(); else alert(`Not deleted: HTTP ${r.status}`);
+}));
 document.getElementById("filter").addEventListener("input", e => {
   const q = e.target.value.toLowerCase();
   document.querySelectorAll("#papers tr:not(:first-child)").forEach(r => {
