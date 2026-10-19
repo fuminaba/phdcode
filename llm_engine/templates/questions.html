@@ -5,15 +5,6 @@
 :root { --cal0: var(--code); --cal1: #86b6ef; --cal2: #3987e5; --cal3: #184f95; }
 @media (prefers-color-scheme: dark) { :root { --cal1: #184f95; --cal2: #2a78d6; --cal3: #86b6ef; } }
 .score { font-size: 26px; font-weight: 600; }
-textarea { width: 100%; min-height: 160px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--panel); color: var(--text); font: inherit; }
-select { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--panel); color: var(--text); }
-button.go { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--accent);
-  background: var(--accent); color: var(--panel); cursor: pointer; }
-button.alt { background: none; color: var(--accent); }
-button.go:disabled { opacity: .6; cursor: wait; }
-.models { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 10px; font-size: 14px; }
 .cal { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-flow: column; grid-auto-columns: 12px;
   gap: 2px; overflow-x: auto; padding-bottom: 4px; }
 .cal div, .key i { border-radius: 2px; background: var(--cal0); }
@@ -28,7 +19,6 @@ button.go:disabled { opacity: .6; cursor: wait; }
 .topics td.n, .types td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .types td.bar { width: 50%; min-width: 120px; }
 .types .bar i { display: block; height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); }
-[hidden] { display: none !important; }
 .chat { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; }
 .chat .log { max-height: 420px; overflow-y: auto; }
 .chat .msg-student, .chat .msg-tutor { padding: 6px 10px; border-radius: 8px; margin: 6px 0; }
@@ -232,17 +222,6 @@ document.getElementById("chat-send")?.addEventListener("click", async e => {
 document.getElementById("chat-input")?.addEventListener("keydown", e => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) document.getElementById("chat-send").click();
 });
-async function post(button, url, body, next) {
-  const label = button.textContent;
-  const msg = button.parentElement.querySelector(".msg");
-  document.querySelectorAll("button.go").forEach(b => b.disabled = true);
-  button.textContent = "The model is working…";
-  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  if (r.ok) return next ? location.assign(next) : location.reload();
-  msg.textContent = (await r.json()).detail || `HTTP ${r.status}`;
-  document.querySelectorAll("button.go").forEach(b => b.disabled = false);
-  button.textContent = label;
-}
 document.getElementById("new")?.addEventListener("click", e =>
   post(e.target, "/questions/new", {
     model: document.getElementById("question-model").value,

@@ -22,3 +22,24 @@ GRADE_SCHEMA = {
     "cited_papers": (list[int], ...),
     "feedback": (str, ...),
 }
+
+DAILY_PAPER_SCHEMA = {
+    "about": (str, ...),
+    "summary": (str, ...),
+    "key_points": (list[str], ...),
+    "examiner_questions": (list[str], ...),
+}
+
+WRITING_PROMPT_SCHEMA = {
+    "prompt": (str, ...),
+    "audience": (str, ...),
+    "max_words": (int, ...),
+}
+
+WRITING_REVIEW_SCHEMA = {
+    "scores": (dict[str, int], ...),
+    "strengths": (str, ...),
+    "improvements": (list[str], ...),
+    "edits": (list[dict[str, str]], ...),
+    "revision": (str, ...),
+}

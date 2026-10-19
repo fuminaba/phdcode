@@ -95,6 +95,14 @@ question must contain; the grader scores mostly by them.
 clarifies but does not answer; after it, it discusses the answer
 (ADR-0023).
 
+**Paper of the day** — a brief of one library paper for the defence: what
+it is about, a summary, the key points and the examiner questions
+(ADR-0024).
+
+**Writing task** — a task of one or two paragraphs of one kind of writing,
+with the facts in it; an *answer* to it gets a score for each *criterion*
+and can be *revised* (ADR-0025).
+
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
 

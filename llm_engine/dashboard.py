@@ -4,9 +4,9 @@
 
 phdcode-dashboard.service runs it on the Tailscale address only, so it has
 no login. It reads Postgres, the paper folders, the digests, the systemd
-units and the GPU state. It changes two things: the importance of a paper
-(ADR-0019) and the daily question with its answer (ADR-0020); the daily
-question calls the summary model.
+units and the GPU state. It changes the importance of a paper (ADR-0019),
+the daily question with its answer (ADR-0020), the paper of the day
+(ADR-0024) and the writing coach (ADR-0025); the last three call a model.
 """
 import asyncio
 import fcntl
@@ -25,7 +25,7 @@ from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 
-from . import gpu, questions
+from . import daily_paper, gpu, questions, writing
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
@@ -402,6 +402,85 @@ async def chat_question(question_id: int, request: Request):
     except Exception as e:  # the model server is stopped
         raise HTTPException(503, f"No reply: {e}")
     return {"html": str(templates.env.filters["md_cites"](reply))}
+
+
+async def _model_body(request: Request, *fields: str) -> dict[str, Any]:
+    """The JSON body, with each model field checked against questions.models()."""
+    body = await request.json()
+    for field in fields:
+        if body.get(field) is not None and body[field] not in questions.models():
+            raise HTTPException(422, f"Unknown model {body[field]!r}.")
+    return body
+
+
+@app.get("/paper-of-the-day")
+async def paper_of_the_day(request: Request):
+    brief = await daily_paper.today()
+    paper = await get_paper(brief["paper_id"]) if brief else None
+    earlier = await _fetch("SELECT d.*, p.title FROM daily_papers d JOIN papers p ON p.id = d.paper_id "
+                           "WHERE d.day < $1 ORDER BY d.day DESC", date.today())
+    return _page(request, "paper_of_the_day.html", brief=brief, p=paper, earlier=earlier,
+                 models=questions.models(), default_model=questions.QUESTION_MODEL)
+
+
+@app.post("/paper-of-the-day/new")
+async def new_paper_of_the_day(request: Request):
+    """{"model"}: a new brief for today, of the next paper (ADR-0024)."""
+    body = await _model_body(request, "model")
+    try:
+        return {"paper_id": (await daily_paper.write(body.get("model")))["paper_id"]}
+    except Exception as e:  # the model server is stopped, the library is empty, or the reply is not valid
+        raise HTTPException(503, f"No paper of the day: {e}")
+
+
+@app.get("/writing")
+async def writing_page(request: Request, p: int = 0):
+    """p: the writing task to show and revise; else today's latest (ADR-0025)."""
+    prompts = await _fetch("SELECT w.*, p.title FROM writing_prompts w LEFT JOIN papers p ON p.id = w.paper_id "
+                           "ORDER BY w.asked_on DESC, w.id DESC")
+    attempts = await _fetch("SELECT a.*, w.kind FROM writing_attempts a JOIN writing_prompts w ON w.id = a.prompt_id "
+                            "ORDER BY a.id")
+    current = next((w for w in prompts if w["id"] == p), None) if p else (
+        prompts[0] if prompts and prompts[0]["asked_on"] == date.today() else None)
+    if p and current is None:
+        raise HTTPException(404, f"No writing task has id {p}.")
+    by_prompt: dict[int, list[dict[str, Any]]] = {}
+    for a in attempts:
+        a["overall"] = writing.overall(a["scores"])
+        by_prompt.setdefault(a["prompt_id"], []).append(a)
+    return _page(request, "writing.html", current=current, history=[w for w in prompts if w is not current],
+                 attempts=by_prompt, stats=writing.stats(attempts), kinds=writing.KINDS, criteria=writing.CRITERIA,
+                 recent=writing.RECENT, today=date.today(), models=questions.models(),
+                 prompt_model=questions.QUESTION_MODEL, review_model=questions.GRADE_MODEL)
+
+
+@app.post("/writing/new")
+async def new_writing(request: Request):
+    """{"kind", "model"}, each optional: a new writing task; a missing kind is
+    the least practised."""
+    body = await _model_body(request, "model")
+    if body.get("kind") is not None and body["kind"] not in writing.KINDS:
+        raise HTTPException(422, f"Unknown kind {body['kind']!r}.")
+    try:
+        return {"id": (await writing.ask(body.get("kind"), body.get("model")))["id"]}
+    except Exception as e:  # the model server is stopped, the library is empty, or the reply is not valid
+        raise HTTPException(503, f"No writing task: {e}")
+
+
+@app.post("/writing/{prompt_id}/review")
+async def review_writing(prompt_id: int, request: Request):
+    """{"text": "...", "model": "..."}: the review of text as an attempt; the
+    page keeps the text if the review fails."""
+    body = await _model_body(request, "model")
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(422, "The answer is empty.")
+    try:
+        return {"id": (await writing.review(prompt_id, text, body.get("model")))["id"]}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # the model server is stopped, or the reply is not valid
+        raise HTTPException(503, f"No review: {e}")
 
 
 @app.get("/how")

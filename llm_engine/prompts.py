@@ -143,3 +143,64 @@ def chat_prompt(question: str, papers: str, graded: Optional[str], conversation:
         "a paper by its id in brackets, for example [P12], when you use it."
     )
 
+
+
+def daily_paper_prompt(paper: str) -> str:
+    # The paper of the day (ADR-0024).
+    return (
+        "You prepare a PhD student in medical image analysis with machine "
+        "learning for oncology for the thesis defence. Write a brief of this "
+        "paper from the student's library.\n\n"
+        f"Paper:\n{paper}\n\n"
+        "In about, write one paragraph for a reader who has not read the "
+        "paper: the problem, why it matters, and the approach. In summary, "
+        "write one paragraph: the data, the method and the main results with "
+        "their key numbers. In key_points, list the 3 to 5 points that the "
+        "student must know for the defence, each in one or two sentences: the "
+        "main claim, the evidence for it, its limitations, and what it means "
+        "for computational pathology. In examiner_questions, list 2 or 3 "
+        "questions that an examiner could ask about this paper. Use only "
+        "facts from the paper; if the text gives no number, do not invent one."
+    )
+
+
+def writing_prompt_prompt(kind: str, paper: str) -> str:
+    # The writing coach: a new prompt (ADR-0025).
+    return (
+        "You coach a PhD student in medical image analysis with machine "
+        "learning for oncology in scientific writing. Write one writing task "
+        "that takes one or two paragraphs to answer.\n\n"
+        f"The kind of writing: {kind}.\n\n"
+        "Use this paper as the subject. Give in the task all the facts that "
+        "the student needs, so that the task tests the writing, not the "
+        f"memory:\n{paper}\n\n"
+        "In prompt, write the task. In audience, name the reader in a few "
+        "words. In max_words, give the word limit (between 100 and 300)."
+    )
+
+
+def writing_review_prompt(kind: str, prompt: str, audience: str, max_words: int, criteria: dict[str, str],
+                          text: str, earlier: Optional[str]) -> str:
+    # The writing coach: the review of an answer (ADR-0025). earlier: the
+    # last answer to the same prompt and its review, or None.
+    lists = "\n".join(f"- {name}: {what}" for name, what in criteria.items())
+    again = "" if earlier is None else (
+        f"This is a revision. The earlier answer and its review:\n{earlier}\n\n"
+        "In strengths, also say what the revision improved.\n\n")
+    return (
+        "You coach a PhD student in scientific writing. Review the student's "
+        "answer to a writing task.\n\n"
+        f"Kind of writing: {kind}\nReader: {audience}\nWord limit: {max_words}\n"
+        f"Task: {prompt}\n\nThe student's answer ({len(text.split())} words):\n{text}\n\n{again}"
+        "In scores, give each criterion below a score from 0 to 10 (key: the "
+        f"criterion name, copied exactly):\n{lists}\n\n"
+        "Most answers of a capable student score 5 to 8; give 9 or 10 only to "
+        "writing that a journal editor would not change. In strengths, write "
+        "1 or 2 sentences on what works. In improvements, list the 2 or 3 "
+        "changes that would improve this writer the most, most important "
+        "first, each as an instruction with the reason. In edits, give 2 to 5 "
+        "sentences or phrases of the answer: before (copied exactly), after "
+        "(your version) and why (one short sentence). In revision, rewrite "
+        "the whole answer as a strong writer would, within the word limit, "
+        "with the student's content and voice."
+    )

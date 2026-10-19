@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Writing · phdcode{% endblock %}
+{% block head %}
+<style>
+.score { font-size: 26px; font-weight: 600; }
+.bars td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bars td.bar { width: 45%; min-width: 120px; }
+.bars .bar i { display: block; height: 10px; border-radius: 0 4px 4px 0; background: var(--accent); }
+.edits td:first-child { text-decoration: line-through; color: var(--muted); }
+.words { font-size: 13px; }
+.prose { white-space: pre-wrap; }
+</style>
+{% endblock %}
+{% block main %}
+<h1>Writing</h1>
+{% macro delta(d) %}{% if d is not none %}<span class="{{ 'ok' if d > 0 else 'bad' if d < 0 else 'muted' }}" style="font-size:15px">{{ "%+.1f"|format(d) }}</span>{% endif %}{% endmacro %}
+<div class="cards" style="margin-bottom:14px">
+  <div class="card"><div class="n">{{ stats.tasks }}</div><div class="l">tasks answered</div></div>
+  <div class="card"><div class="n">{{ stats.attempts }}</div><div class="l">answers and revisions</div></div>
+  {% set all, last, change = stats.overall %}
+  <div class="card"><div class="n">{{ "%.1f"|format(all) if all is not none else "–" }}</div><div class="l">mean score (of 10)</div></div>
+  <div class="card"><div class="n">{{ "%.1f"|format(last) if last is not none else "–" }} {{ delta(change) }}</div><div class="l">mean of the last {{ recent }}{{ ", against the answers before" if change is not none }}</div></div>
+</div>
+
+{% macro history_line(w) %}{% for a in attempts.get(w.id, []) %}{{ "%.1f"|format(a.overall) }}{{ " → " if not loop.last }}{% endfor %}{% endmacro %}
+{% macro review(a, previous) %}
+  <p class="score">{{ "%.1f"|format(a.overall) }}/10</p>
+  <table class="bars">
+    <tr><th>Criterion</th><th>Score</th><th></th><th>{{ "Before" if previous }}</th></tr>
+    {% for c, what in criteria.items() %}{% set s = a.scores.get(c) %}
+    <tr><td title="{{ what }}">{{ c }}</td><td class="n">{{ s }}</td><td class="bar"><i style="width: {{ 10 * (s or 0) }}%" title="{{ c }}: {{ s }} of 10"></i></td>
+        <td class="n muted">{% if previous %}{% set d = s - previous.scores.get(c, s) %}{{ previous.scores.get(c) }}{% if d %} <span class="{{ 'ok' if d > 0 else 'bad' }}">({{ "%+d"|format(d) }})</span>{% endif %}{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  <p><b>What works:</b> {{ a.strengths }}</p>
+  <p><b>Improve next:</b></p><ol>{% for i in a.improvements %}<li>{{ i }}</li>{% endfor %}</ol>
+  {% if a.edits %}<p><b>Edits:</b></p><div class="scroll"><table class="edits">
+    <tr><th>Your text</th><th>Better</th><th>Why</th></tr>
+    {% for e in a.edits %}<tr><td>{{ e.before }}</td><td>{{ e.after }}</td><td class="muted">{{ e.why }}</td></tr>{% endfor %}
+  </table></div>{% endif %}
+  <details><summary>Your answer ({{ a.text.split()|length }} words)</summary><p class="prose">{{ a.text }}</p></details>
+  <details><summary>The coach's version ({{ a.revision.split()|length }} words)</summary><p class="prose">{{ a.revision }}</p></details>
+  <div class="muted">Reviewed by {{ a.model or "?" }} · {{ a.graded_at|when }}</div>
+{% endmacro %}
+
+<h2>Task</h2>
+<div class="panel">
+  <div class="models">
+    <label>Task model <select id="question-model">{% for m in models %}<option{{ " selected" if m == prompt_model }}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Reviewer <select id="grade-model">{% for m in models %}<option{{ " selected" if m == review_model }}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Kind <select id="kind"><option value="">Least practised</option>{% for k, d in kinds.items() %}<option value="{{ k }}" title="{{ d }}">{{ k }}</option>{% endfor %}</select></label>
+  </div>
+{% if not current %}
+  <p>No task yet today. The model writes a task of one or two paragraphs about a paper of your library, with the facts that you need, so that only the writing counts.</p>
+  <button class="go" id="new">New writing task</button> <span class="msg bad"></span>
+{% else %}
+  {% set tries = attempts.get(current.id, []) %}
+  {% if current.asked_on != today %}<p class="muted">A task of {{ current.asked_on }}. <a href="/writing">Back to today</a></p>{% endif %}
+  <div><span class="tag ok" title="{{ kinds.get(current.kind, '') }}">{{ current.kind }}</span> <span class="tag">for: {{ current.audience }}</span> <span class="tag">at most {{ current.max_words }} words</span></div>
+  <p><b>{{ current.prompt }}</b></p>
+  {% if current.paper_id %}<p class="muted">Subject: <a href="/papers/{{ current.paper_id }}">{{ current.title }}</a></p>{% endif %}
+  {% if tries %}
+  <div id="result">
+    {% if tries|length > 1 %}<p class="muted">Score history: {{ history_line(current) }}</p>{% endif %}
+    {{ review(tries[-1], tries[-2] if tries|length > 1 else none) }}
+    {% if tries|length > 1 %}<details><summary>Earlier attempts ({{ tries|length - 1 }})</summary>
+      {% for a in tries[:-1] %}<div class="panel">{{ review(a, none) }}</div>{% endfor %}</details>{% endif %}
+    <p><button class="go" id="redo">Revise</button> <button class="go alt" id="new">New task</button> <span class="msg bad"></span></p>
+  </div>
+  {% endif %}
+  <div id="form"{{ " hidden" if tries }}>
+    {% if tries %}<p class="muted">Revise your answer with the review. The next review compares it with this one.</p>{% endif %}
+    <textarea id="text">{{ tries[-1].text if tries else "" }}</textarea>
+    <p class="words muted"><span id="count">0</span> of {{ current.max_words }} words</p>
+    <p><button class="go" id="submit" data-id="{{ current.id }}">Submit</button>
+       {% if tries %}<button class="go alt" id="cancel">Cancel</button>{% else %}<button class="go alt" id="new">Skip: new task</button>{% endif %}
+       <span class="msg bad"></span></p>
+  </div>
+{% endif %}
+</div>
+
+<h2>Criteria <span class="muted">(mean score of all answers, of the last {{ recent }}, and its change against the answers before)</span></h2>
+<div class="panel">
+  <table class="bars">
+    <tr><th>Criterion</th><th>All</th><th></th><th>Last {{ recent }}</th><th>Change</th></tr>
+    {% for c, (all, last, change) in stats.criteria.items() %}
+    <tr><td title="{{ criteria[c] }}">{{ c }}</td><td class="n">{{ "%.1f"|format(all) if all is not none else "–" }}</td>
+        <td class="bar"><i style="width: {{ 10 * (last or 0) }}%" title="{{ c }}: last {{ recent }}"></i></td>
+        <td class="n">{{ "%.1f"|format(last) if last is not none else "–" }}</td><td class="n">{{ delta(change) if change is not none else "–" }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="muted">Hover a criterion for what it means. The bar is the mean of the last {{ recent }} answers. The change shows after more than {{ recent }} answers.</p>
+</div>
+
+<h2>Kinds of writing</h2>
+<div class="panel">
+  <table class="bars">
+    <tr><th>Kind</th><th>Answers</th><th>Mean score</th></tr>
+    {% for k, (n, mean) in stats.kinds.items() %}
+    <tr><td title="{{ kinds[k] }}">{{ k }}</td><td class="n">{{ n }}</td><td class="n">{{ "%.1f"|format(mean) if mean is not none else "–" }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if history %}
+<h2>Earlier tasks</h2>
+{% for w in history %}
+<details class="panel"><summary>{{ w.asked_on }} · {{ w.kind }} · {% if attempts.get(w.id) %}<b>{{ history_line(w) }}</b>{% else %}<span class="muted">skipped</span>{% endif %} · {{ w.prompt[:100] }}{{ "…" if w.prompt|length > 100 }}</summary>
+  <p><b>{{ w.prompt }}</b></p>
+  {% set tries = attempts.get(w.id, []) %}
+  {% if tries %}{{ review(tries[-1], tries[-2] if tries|length > 1 else none) }}{% endif %}
+  <p><a href="/writing?p={{ w.id }}">{{ "Revise" if tries else "Answer" }}</a></p>
+</details>
+{% endfor %}
+{% endif %}
+
+<script>
+// The chosen models and kind stay for the next visit, in this browser only (models shared with Questions).
+for (const id of ["question-model", "grade-model", "kind"]) {
+  const select = document.getElementById(id);
+  try {
+    const saved = localStorage.getItem(id === "kind" ? "writing-kind" : id);
+    if ([...select.options].some(o => o.value === saved)) select.value = saved;
+    select.addEventListener("change", () => { try { localStorage.setItem(id === "kind" ? "writing-kind" : id, select.value); } catch {} });
+  } catch {}
+}
+const text = document.getElementById("text"), count = document.getElementById("count");
+function words() { count.textContent = text.value.trim() ? text.value.trim().split(/\s+/).length : 0; }
+text?.addEventListener("input", words);
+if (text) words();
+document.getElementById("redo")?.addEventListener("click", () => {
+  document.getElementById("result").hidden = true;
+  document.getElementById("form").hidden = false;
+  text.focus();
+});
+document.getElementById("cancel")?.addEventListener("click", () => {
+  document.getElementById("result").hidden = false;
+  document.getElementById("form").hidden = true;
+});
+document.querySelectorAll("#new").forEach(b => b.addEventListener("click", e =>
+  post(e.target, "/writing/new", {kind: document.getElementById("kind").value || null,
+                                  model: document.getElementById("question-model").value}, "/writing")));
+document.getElementById("submit")?.addEventListener("click", e =>
+  post(e.target, `/writing/${e.target.dataset.id}/review`,
+       {text: text.value, model: document.getElementById("grade-model").value}));
+</script>
+{% endblock %}
