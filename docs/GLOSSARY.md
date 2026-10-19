@@ -73,6 +73,10 @@ papers that the sweep saved. Triage reads the titles of the library.
 reading it: *interesting*, *recommended* or *crucial*, weakest first; empty
 until set (ADR-0019). Not the triage probability, which a model gives.
 
+**Bin** — the papers that the user deleted. They leave search, the queues and
+the study pages, and the user can restore them; after the bin days (default
+30) the interface deletes them for good, with their files (ADR-0026).
+
 **Daily question** — a question from the papers of the library, mostly the
 crucial ones, that the user asks for on the page Questions and answers in a
 paragraph; a model grades it from 0 to 10, plus a bonus for correct

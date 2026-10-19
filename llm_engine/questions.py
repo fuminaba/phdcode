@@ -97,7 +97,7 @@ NEIGHBOURS = 2
 REPEAT_DAYS = 14
 MAX_BONUS = 3
 
-_LIBRARY = "(origin IS NULL OR importance IS NOT NULL) AND title IS NOT NULL"
+_LIBRARY = "(origin IS NULL OR importance IS NOT NULL) AND title IS NOT NULL AND deleted_at IS NULL"
 
 
 def models() -> list[str]:

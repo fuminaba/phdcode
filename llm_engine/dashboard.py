@@ -5,6 +5,7 @@
 phdcode-dashboard.service runs it on the Tailscale address only, so it has
 no login. It reads Postgres, the paper folders, the digests, the systemd
 units and the GPU state. It changes the importance of a paper (ADR-0019),
+its notes, its read mark and the bin (ADR-0026),
 the daily question with its answer (ADR-0020), the paper of the day
 (ADR-0024) and the writing coach (ADR-0025); the last three call a model.
 """
@@ -13,13 +14,14 @@ import fcntl
 import math
 import os
 import re
+import shutil
 import subprocess
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
@@ -45,6 +47,8 @@ SOURCE_URL = {
 HOW_PAGE = Path(__file__).resolve().parents[1] / "docs" / "how-it-works.md"
 # Weakest first, as in the CHECK of papers.importance (schema.sql).
 IMPORTANCE = ("interesting", "recommended", "crucial")
+# The choices of the bin page; a paper stays in the bin this many days (ADR-0026).
+BIN_DAYS = (7, 14, 30, 60, 90, 180, 365)
 _DIGEST_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
 # No raw HTML: the paper text comes from a PDF.
 _markdown = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -160,10 +164,10 @@ async def _fetch(query: str, *args: Any) -> list[dict[str, Any]]:
 
 _PAPERS_SQL = (
     "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, p.pdf_url, "
-    "       p.parse_mode, p.importance, p.created_at, p.pdf_source, p.pdf_error, "
+    "       p.parse_mode, p.importance, p.read_at, p.created_at, p.pdf_source, p.pdf_error, "
     "       (p.methods_summary IS NOT NULL AND p.results_summary IS NOT NULL) AS summarized, "
     "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks "
-    "FROM papers p ORDER BY p.id DESC"
+    "FROM papers p WHERE p.deleted_at IS NULL ORDER BY p.id DESC"
 )
 
 
@@ -171,8 +175,8 @@ _PAPERS_SQL = (
 async def overview(request: Request):
     counts, papers, pending, system = await asyncio.gather(
         _fetch(
-            "SELECT (SELECT count(*) FROM papers) AS papers, "
-            "       (SELECT count(*) FROM papers WHERE parse_mode IS NOT NULL) AS full_text, "
+            "SELECT (SELECT count(*) FROM papers WHERE deleted_at IS NULL) AS papers, "
+            "       (SELECT count(*) FROM papers WHERE parse_mode IS NOT NULL AND deleted_at IS NULL) AS full_text, "
             "       (SELECT count(*) FROM chunks) AS chunks, "
             "       (SELECT count(*) FROM keywords) AS keywords, "
             "       (SELECT count(*) FROM saved_searches WHERE cancelled_at IS NULL) AS searches, "
@@ -192,10 +196,12 @@ async def overview(request: Request):
 
 @app.get("/papers")
 async def papers(request: Request):
+    days = await _bin_days()
+    await _empty_bin(days)
     rows = await _fetch(_PAPERS_SQL)
     for p in rows:
         p["state"] = _paper_state(p)
-    return _page(request, "papers.html", papers=rows)
+    return _page(request, "papers.html", papers=rows, days=days)
 
 
 def _paper_dir(paper_id: int) -> Path:
@@ -234,6 +240,59 @@ async def set_importance(paper_id: int, level: str = ""):
     if not rows:
         raise HTTPException(404, f"No paper has id {paper_id}.")
     return {"id": paper_id, "importance": level or None}
+
+
+async def _update_paper(paper_id: int, assignment: str, value: Any) -> None:
+    """Sets one column of a paper ($2 in the assignment), or answers 404."""
+    if not await _fetch(f"UPDATE papers SET {assignment}, updated_at = now() WHERE id = $1 RETURNING id",
+                        paper_id, value):
+        raise HTTPException(404, f"No paper has id {paper_id}.")
+
+
+@app.post("/papers/{paper_id}/notes")
+async def set_notes(paper_id: int, notes: str = Body(embed=True)):
+    await _update_paper(paper_id, "notes = $2", notes.strip() or None)
+
+
+@app.post("/papers/{paper_id}/read")
+async def set_read(paper_id: int, read: bool):
+    await _update_paper(paper_id, "read_at = CASE WHEN $2 THEN coalesce(read_at, now()) END", read)
+
+
+@app.post("/papers/{paper_id}/bin")
+async def move_to_bin(paper_id: int, restore: bool = False):
+    """Moves a paper to the bin, or restores it from the bin."""
+    await _update_paper(paper_id, "deleted_at = CASE WHEN $2 THEN NULL ELSE coalesce(deleted_at, now()) END", restore)
+
+
+async def _bin_days() -> int:
+    rows = await _fetch("SELECT value FROM settings WHERE key = 'bin_days'")
+    return int(rows[0]["value"]) if rows else 30
+
+
+async def _empty_bin(days: int) -> None:
+    """Deletes for good each paper that is in the bin longer than the bin
+    days, with its folder. The tables of the paper cascade (schema.sql)."""
+    # ponytail: runs when the papers or the bin page opens; a timer if a paper must go on time.
+    for row in await _fetch("DELETE FROM papers WHERE deleted_at < now() - make_interval(days => $1) RETURNING id", days):
+        shutil.rmtree(_paper_dir(row["id"]), ignore_errors=True)
+
+
+@app.get("/bin")
+async def bin_page(request: Request):
+    days = await _bin_days()
+    await _empty_bin(days)
+    rows = await _fetch("SELECT id, title, authors, deleted_at, deleted_at + make_interval(days => $1) AS purge_at "
+                        "FROM papers WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC", days)
+    return _page(request, "bin.html", papers=rows, days=days, choices=sorted(set(BIN_DAYS) | {days}))
+
+
+@app.post("/bin/days")
+async def set_bin_days(days: int):
+    if not 1 <= days <= 3650:
+        raise HTTPException(422, "The bin days must be from 1 to 3650.")
+    await _fetch("INSERT INTO settings (key, value) VALUES ('bin_days', $1) "
+                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value", str(days))
 
 
 @app.get("/papers/{paper_id}/files/{path:path}")

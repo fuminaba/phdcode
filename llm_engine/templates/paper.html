@@ -3,6 +3,7 @@
 {% block main %}
 <p class="muted"><a href="/papers">Papers</a> / {{ p.id }}</p>
 <h1>{{ p.title or "(no title)" }}</h1>
+{% if p.deleted_at %}<div class="panel warn">This paper is in the <a href="/bin">bin</a> since {{ p.deleted_at|when }}. Restore it from the bin.</div>{% endif %}
 
 <div class="panel">
   <div>{{ p.authors|join(", ") or "(no authors)" }}</div>
@@ -23,6 +24,13 @@
     {% for level in importance_levels %}<button type="button" class="tag imp imp-{{ level }}{{ ' on' if p.importance == level }}" value="{{ level }}" aria-pressed="{{ 'true' if p.importance == level else 'false' }}">{{ level }}</button> {% endfor %}
     <span id="importance-error" class="bad"></span>
   </div>
+  <label style="display:block;margin-top:8px"><input type="checkbox" id="read"{{ " checked" if p.read_at }}> I have read this paper</label>
+</div>
+
+<h2>My notes</h2>
+<div class="panel">
+  <textarea id="notes" placeholder="Your own notes on this paper">{{ p.notes or "" }}</textarea>
+  <div style="margin-top:6px"><button type="button" class="go" id="save-notes">Save the notes</button> <span id="notes-msg" class="muted"></span></div>
 </div>
 <script>
 // A click sets the level; a click on the level that is set clears it.
@@ -36,6 +44,20 @@ document.querySelectorAll("#importance button").forEach(b => b.addEventListener(
     o.setAttribute("aria-pressed", o.value === level);
   });
 }));
+document.getElementById("read").addEventListener("change", async e => {
+  const r = await fetch(`/papers/{{ p.id }}/read?read=${e.target.checked}`, {method: "POST"});
+  if (!r.ok) { e.target.checked = !e.target.checked; alert(`Not saved: HTTP ${r.status}`); }
+});
+const notes = document.getElementById("notes"), notesMsg = document.getElementById("notes-msg");
+notes.addEventListener("input", () => { notesMsg.textContent = "not saved"; notesMsg.className = "warn"; });
+document.getElementById("save-notes").addEventListener("click", async () => {
+  const r = await fetch("/papers/{{ p.id }}/notes", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                   body: JSON.stringify({notes: notes.value})});
+  notesMsg.textContent = r.ok ? `saved at ${new Date().toLocaleTimeString()}` : `not saved: HTTP ${r.status}`;
+  notesMsg.className = r.ok ? "ok" : "bad";
+});
+// The browser asks before it leaves a page with unsaved notes.
+addEventListener("beforeunload", e => { if (notesMsg.textContent === "not saved") e.preventDefault(); });
 </script>
 
 <h2>Abstract <span class="muted">(the concept facet: from the source, never generated)</span></h2>

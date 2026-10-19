@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Bin · phdcode{% endblock %}
+{% block main %}
+<h1>Bin <span class="muted">({{ papers|length }})</span></h1>
+<p>The deleted papers. Search, the queues and the study pages do not use them. A paper stays here for
+<select id="days">{% for d in choices %}<option value="{{ d }}"{{ " selected" if d == days }}>{{ d }} days</option>{% endfor %}</select>;
+then phdcode deletes it for good, with its files. <span id="days-msg" class="muted"></span></p>
+<div class="scroll"><table id="bin">
+<tr><th>Id</th><th>Title</th><th>Authors</th><th>Deleted</th><th>Deleted for good</th><th></th></tr>
+{% for p in papers %}
+<tr>
+  <td>{{ p.id }}</td>
+  <td><a href="/papers/{{ p.id }}">{{ p.title or "(no title)" }}</a></td>
+  <td>{{ p.authors[0] if p.authors }}{% if p.authors|length > 1 %} <span class="muted">+{{ p.authors|length - 1 }}</span>{% endif %}</td>
+  <td>{{ p.deleted_at|when }}</td>
+  <td>{{ p.purge_at|when }}</td>
+  <td><button type="button" class="go alt restore" value="{{ p.id }}">Restore</button></td>
+</tr>
+{% else %}
+<tr><td colspan="6" class="muted">The bin is empty.</td></tr>
+{% endfor %}
+</table></div>
+<script>
+document.querySelectorAll("button.restore").forEach(b => b.addEventListener("click", async () => {
+  const r = await fetch(`/papers/${b.value}/bin?restore=true`, {method: "POST"});
+  if (r.ok) location.reload(); else alert(`Not restored: HTTP ${r.status}`);
+}));
+document.getElementById("days").addEventListener("change", async e => {
+  // Fewer days delete the older papers of the bin for good at once.
+  if (e.target.value < {{ days }} && !confirm(`Delete for good now each paper that is in the bin longer than ${e.target.value} days?`)) {
+    e.target.value = {{ days }};
+    return;
+  }
+  const r = await fetch(`/bin/days?days=${e.target.value}`, {method: "POST"});
+  if (r.ok) location.reload(); else document.getElementById("days-msg").textContent = `not saved: HTTP ${r.status}`;
+});
+</script>
+{% endblock %}

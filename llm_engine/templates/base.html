@@ -33,7 +33,17 @@ h2 { font-size: 17px; margin: 26px 0 10px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
 .card .n { font-size: 26px; font-weight: 600; }
 .card .l { color: var(--muted); font-size: 13px; }
-.scroll { overflow-x: auto; }
+/* A long table scrolls in a box that fits the window, so that its horizontal
+   scroll bar is always in view; its headings stay at the top of the box. */
+.scroll { overflow: auto; max-height: 75vh; }
+.scroll th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+/* Thin scroll bars in the colours of the theme: the standard properties for
+   Firefox and Chrome, the ::-webkit-scrollbar rules for Safari. */
+.scroll { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll::-webkit-scrollbar-track { background: transparent; }
+.scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.scroll::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 table { border-collapse: collapse; width: 100%; background: var(--panel); }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 13px; color: var(--muted); font-weight: 600; }
@@ -44,6 +54,8 @@ th { font-size: 13px; color: var(--muted); font-weight: 600; }
 button.imp { cursor: pointer; border-color: var(--line); color: var(--muted); }
 button.imp:hover { border-color: var(--c); color: var(--c); }
 button.imp.on { border-color: var(--c); color: var(--panel); }
+button.tag { font: inherit; font-size: 12px; background: none; color: var(--muted); cursor: pointer; }
+button.delete:hover { border-color: var(--bad); color: var(--bad); }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
 pre, code { background: var(--code); border-radius: 4px; }
 pre { padding: 10px; overflow-x: auto; white-space: pre-wrap; }
@@ -97,6 +109,7 @@ async function post(button, url, body, next) {
   <a href="/questions" class="{{ 'on' if here.startswith('/questions') }}">Questions</a>
   <a href="/paper-of-the-day" class="{{ 'on' if here.startswith('/paper-of-the-day') }}">Paper of the day</a>
   <a href="/writing" class="{{ 'on' if here.startswith('/writing') }}">Writing</a>
+  <a href="/bin" class="{{ 'on' if here.startswith('/bin') }}">Bin</a>
   <a href="/how" class="{{ 'on' if here.startswith('/how') }}">How it works</a>
 </header>
 <main>
