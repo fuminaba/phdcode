@@ -276,13 +276,19 @@ async def set_full_text(
 # 1 / (RRF_K + rank_in_that_method). RRF_K=60 is the standard constant from
 # the original RRF paper (Cormack et al. 2009) -- chosen so no single
 # top-ranked hit from one method can completely dominate the fused order,
-# without needing to normalize cosine distance and ts_rank onto the same
+# without needing to normalize cosine distance and BM25 onto the same
 # scale (they aren't comparable numbers otherwise). CANDIDATE_POOL is how
 # many rows *each* method ranks before fusion -- wider than max_results so
 # fusion has enough to work with; the final result is still capped at
 # max_results after combining.
 _RRF_K = 60
 _CANDIDATE_POOL = 20
+# BM25 over the stored tsvectors (ADR-0029): a row matches if it has any
+# word of the query (OR), and a rare word weighs more than a common one
+# (IDF). The document length is the number of distinct lexemes, not of
+# words: a tsvector keeps no word count. k1 and b are the usual defaults.
+_BM25_K1 = 1.2
+_BM25_B = 0.75
 # The links of chunk c, as a JSON array (asyncpg returns it as text).
 _LINKS_OF_CHUNK = (
     "(SELECT coalesce(json_agg(json_build_object('to', l.to_index, 'kind', l.kind, 'label', l.label) "
@@ -321,13 +327,25 @@ def _rrf_cte(table: str, vector_col: str, text_col: str, where: str = "TRUE") ->
         f"    FROM {table} "
         f"    WHERE {where} AND {vector_col} IS NOT NULL "
         f"    ORDER BY {vector_col} <=> $1 LIMIT $4"
+        # ponytail: corpus scans every row of the table for N and avgdl on
+        # each query (about 50 ms on 2,171 chunks); keep the two numbers in
+        # a table that the writes update if the chunks grow past ~100k.
+        f"), corpus AS ("
+        f"    SELECT count(*) AS n, avg(length({text_col})) AS avgdl FROM {table} WHERE {where}"
+        f"), matches AS ("
+        f"    SELECT t.id, length(t.{text_col}) AS dl, u.lexeme, array_length(u.positions, 1) AS tf "
+        f"    FROM {table} t, unnest(t.{text_col}) u "
+        f"    WHERE {where} AND t.{text_col} @@ replace(plainto_tsquery('english', $2)::text, ' & ', ' | ')::tsquery "
+        f"    AND u.lexeme = ANY(tsvector_to_array(to_tsvector('english', $2)))"
+        f"), df AS ("
+        f"    SELECT lexeme, count(*) AS df FROM matches GROUP BY lexeme"
         f"), text_ranked AS ("
-        f"    SELECT id, ROW_NUMBER() OVER ("
-        f"        ORDER BY ts_rank({text_col}, websearch_to_tsquery('english', $2)) DESC"
-        f"    ) AS rank "
-        f"    FROM {table} "
-        f"    WHERE {where} AND {text_col} @@ websearch_to_tsquery('english', $2) "
-        f"    ORDER BY ts_rank({text_col}, websearch_to_tsquery('english', $2)) DESC LIMIT $4"
+        f"    SELECT m.id, ROW_NUMBER() OVER (ORDER BY sum("
+        f"        ln(1 + (c.n - df.df + 0.5) / (df.df + 0.5)) * m.tf * ({_BM25_K1} + 1) "
+        f"        / (m.tf + {_BM25_K1} * (1 - {_BM25_B} + {_BM25_B} * m.dl / c.avgdl))"
+        f"    ) DESC) AS rank "
+        f"    FROM matches m CROSS JOIN corpus c JOIN df USING (lexeme) "
+        f"    GROUP BY m.id ORDER BY rank LIMIT $4"
         f"), fused AS ("
         f"    SELECT COALESCE(v.id, t.id) AS id, "
         f"           (COALESCE(1.0 / ($5 + v.rank), 0) + COALESCE(1.0 / ($5 + t.rank), 0))::float8 AS score "
