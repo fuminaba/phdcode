@@ -30,8 +30,8 @@ BACKUP_REMOTE = os.getenv("BACKUP_REMOTE", "").rstrip("/")
 POSTGRES_CONTAINER = os.getenv("POSTGRES_CONTAINER", "alira2-postgres-1")
 DUMP_DIR = PAPERS_DIR.parent / "backup"
 DUMPS_KEPT = 7
-# The phdcode tables, from schema.sql: the database also holds the tables of
-# the old general assistant (ADR-0015), which the dump leaves out.
+# The phdcode tables, from schema.sql: a table that is not in it is not
+# phdcode's, and the dump leaves it out.
 TABLES = re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", SCHEMA_PATH.read_text())
 
 

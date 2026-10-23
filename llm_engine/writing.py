@@ -18,7 +18,7 @@ from typing import Any, Optional
 from .generation import generate
 from .memory import get_pool
 from .prompts import writing_prompt_prompt, writing_review_prompt
-from .questions import GRADE_MODEL, QUESTION_MODEL, _LIBRARY, _PAPER_FIELDS, _check_model, _paper_text
+from .questions import GRADE_MODEL, QUESTION_MODEL, _STUDY_PAPERS, _PAPER_FIELDS, _check_model, _paper_text
 
 WRITING_PROMPT_SCHEMA = {
     "prompt": (str, ...),
@@ -85,7 +85,7 @@ async def ask(kind: Optional[str] = None, model: Optional[str] = None) -> dict[s
             "SELECT p.kind FROM writing_attempts a JOIN writing_prompts p ON p.id = a.prompt_id")])
         # ponytail: any summarized library paper at random; steer by importance if the subjects repeat.
         paper = await conn.fetchrow(
-            f"SELECT {_PAPER_FIELDS} FROM papers WHERE {_LIBRARY} ORDER BY methods_summary IS NULL, random() LIMIT 1")
+            f"SELECT {_PAPER_FIELDS} FROM papers WHERE {_STUDY_PAPERS} ORDER BY methods_summary IS NULL, random() LIMIT 1")
     if paper is None:
         raise ValueError("The library is empty: add papers first.")
     reply = await asyncio.to_thread(generate, writing_prompt_prompt(f"{kind}: {KINDS[kind]}", _paper_text(dict(paper))),
