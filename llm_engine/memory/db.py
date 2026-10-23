@@ -296,6 +296,13 @@ _LINKS_OF_CHUNK = (
     "WHERE l.paper_id = c.paper_id AND l.from_index = c.chunk_index)"
 )
 
+# A judged hit t, its saved search s, and the stored paper p of the hit if
+# there is one. The caller selects from t, s and p.
+HITS_JOIN = (
+    "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
+    "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
+)
+
 
 async def pending_papers() -> list[dict[str, Any]]:
     """The full-text papers with a pending model step: no methods or results
@@ -479,9 +486,7 @@ async def unscored_hits() -> list[dict[str, Any]]:
     rows = await (await get_pool()).fetch(
         "SELECT t.saved_search_id, t.source_id, coalesce(t.title, p.title) AS title, "
         "       coalesce(t.abstract, p.abstract) AS abstract "
-        "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
-        "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
-        "WHERE t.head_probability IS NULL AND coalesce(t.title, p.title) IS NOT NULL")
+        f"{HITS_JOIN}WHERE t.head_probability IS NULL AND coalesce(t.title, p.title) IS NOT NULL")
     return [dict(r) for r in rows]
 
 

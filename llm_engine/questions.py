@@ -104,7 +104,7 @@ NEIGHBOURS = 2
 REPEAT_DAYS = 14
 MAX_BONUS = 3
 
-_LIBRARY = "(origin IS NULL OR importance IS NOT NULL) AND title IS NOT NULL AND deleted_at IS NULL"
+_STUDY_PAPERS = "(origin IS NULL OR importance IS NOT NULL) AND title IS NOT NULL AND deleted_at IS NULL"
 # The columns that _paper_text reads.
 _PAPER_FIELDS = "id, title, authors, published_date, abstract, methods_summary, results_summary"
 
@@ -167,7 +167,7 @@ async def _pick(conn, focus: list[float]) -> list[dict[str, Any]]:
     recent = await conn.fetchval(
         "SELECT coalesce(array_agg(DISTINCT x), '{}') FROM questions, unnest(paper_ids) x "
         "WHERE asked_on > $1::date - $2::int", date.today(), REPEAT_DAYS)
-    rows = await conn.fetch(f"SELECT id, importance, id = ANY($1) AS recent FROM papers WHERE {_LIBRARY}", recent)
+    rows = await conn.fetch(f"SELECT id, importance, id = ANY($1) AS recent FROM papers WHERE {_STUDY_PAPERS}", recent)
     if not rows:
         raise ValueError("The library is empty: add papers first.")
     fresh = [r for r in rows if not r["recent"]] or rows
@@ -176,7 +176,7 @@ async def _pick(conn, focus: list[float]) -> list[dict[str, Any]]:
                             "ORDER BY concept_embedding <=> $2 LIMIT $3", tier, focus, FOCUS_PAPERS)
     first = random.choice([r["id"] for r in near] or tier)
     ids = [first] + [r["id"] for r in await conn.fetch(
-        f"SELECT id FROM papers WHERE {_LIBRARY} AND id <> $1 AND concept_embedding IS NOT NULL "
+        f"SELECT id FROM papers WHERE {_STUDY_PAPERS} AND id <> $1 AND concept_embedding IS NOT NULL "
         "ORDER BY concept_embedding <=> (SELECT concept_embedding FROM papers WHERE id = $1) LIMIT $2",
         first, NEIGHBOURS)]
     rows = await conn.fetch(f"SELECT {_PAPER_FIELDS} FROM papers WHERE id = ANY($1)", ids)
@@ -234,7 +234,7 @@ async def grade(question_id: int, answer: Optional[str] = None, model: Optional[
         if q is None or not q["answer"]:
             raise LookupError(f"Question {question_id} does not exist or has no answer.")
         papers = await conn.fetch(f"SELECT {_PAPER_FIELDS} FROM papers WHERE id = ANY($1)", q["paper_ids"])
-        library = await conn.fetch(f"SELECT id, title, authors, published_date FROM papers WHERE {_LIBRARY} ORDER BY id")
+        library = await conn.fetch(f"SELECT id, title, authors, published_date FROM papers WHERE {_STUDY_PAPERS} ORDER BY id")
     titles = "\n".join(f"P{r['id']}: {r['title']} ({(r['authors'] or ['?'])[0]} {(r['published_date'] or '')[:4]})"
                        for r in library)
     prompt = grade_prompt(q["question"], q["model_answer"], q["key_points"] or [],
@@ -307,7 +307,7 @@ async def write_daily_paper(model: Optional[str] = None) -> dict[str, Any]:
         rows = await conn.fetch(
             "SELECT p.id, p.importance, p.methods_summary IS NOT NULL AS summarized, "
             "       (SELECT max(day) FROM daily_papers d WHERE d.paper_id = p.id) AS last "
-            f"FROM papers p WHERE {_LIBRARY}")
+            f"FROM papers p WHERE {_STUDY_PAPERS}")
         paper = dict(await conn.fetchrow(f"SELECT {_PAPER_FIELDS} FROM papers WHERE id = $1",
                                          choose_daily_paper([dict(r) for r in rows])))
     reply = await asyncio.to_thread(generate, daily_paper_prompt(_paper_text(paper)), model,

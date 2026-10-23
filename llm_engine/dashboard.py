@@ -33,6 +33,7 @@ from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
 from .memory import close_pool, get_paper, get_pool, pending_papers
+from .memory.db import HITS_JOIN
 from .memory.document_index import CHUNK_OVERLAP, CHUNK_SIZE, MAP_CHUNK_SIZE
 from .sources import OPENALEX_API_KEY, PUBMED_API_KEY
 from .sweep import DIGEST_DIR, LOOKBACK_DAYS, MAX_HITS, parse_digest
@@ -320,9 +321,7 @@ async def interests(request: Request):
                "FROM saved_searches s LEFT JOIN triaged_hits t ON t.saved_search_id = s.id "
                "GROUP BY s.id ORDER BY s.cancelled_at IS NOT NULL, s.id"),
         _fetch("SELECT t.saved_search_id, t.source_id, t.probability, t.triaged_at, p.id AS paper_id, p.title "
-               "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
-               "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
-               "ORDER BY t.probability DESC"),
+               f"{HITS_JOIN}ORDER BY t.probability DESC"),
     )
     by_search: dict[int, list[dict[str, Any]]] = {}
     for h in hits:
@@ -378,9 +377,7 @@ async def labels(request: Request):
         "SELECT t.saved_search_id, t.source_id, t.probability, t.triaged_at, t.label, t.labelled_at, "
         "       coalesce(t.title, p.title) AS title, coalesce(t.abstract, p.abstract) AS abstract, t.url, t.head_probability, "
         "       s.source, s.threshold, s.interest, p.id AS paper_id "
-        "FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
-        "LEFT JOIN papers p ON p.source = s.source AND p.source_id = t.source_id "
-        "ORDER BY t.triaged_at DESC, t.probability DESC")
+        f"{HITS_JOIN}ORDER BY t.triaged_at DESC, t.probability DESC")
     for h in hits:
         h["name"] = _search_name(h["interest"])
         h["guess"] = h["probability"] >= h["threshold"]
