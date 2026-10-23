@@ -51,6 +51,9 @@ log = logging.getLogger(__name__)
 
 # The phdcode interface (dashboard.py), for the links to figures.
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:8620")
+# PHDCODE_TOOLS="a,b": the server has only these tools (the page Ask gives
+# its agent the local read-only ones, ADR-0030). Unset: all tools.
+_ONLY_TOOLS = set(filter(None, os.getenv("PHDCODE_TOOLS", "").split(",")))
 _FIGURE = re.compile(r"!\[[^\]]*\]\(([^)/]+)\)")
 
 INSTRUCTIONS = """\
@@ -105,6 +108,8 @@ def tool(fn=None, *, read_only=False):
     Each call is logged in tool_calls (ADR-0028); a failed log only warns."""
     if fn is None:
         return functools.partial(tool, read_only=read_only)
+    if _ONLY_TOOLS and fn.__name__ not in _ONLY_TOOLS:
+        return fn
 
     signature = inspect.signature(fn)
 

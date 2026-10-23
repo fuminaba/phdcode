@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -28,7 +29,7 @@ from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 
-from . import gpu, questions, writing
+from . import ask, gpu, questions, writing
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
@@ -572,6 +573,47 @@ async def review_writing(prompt_id: int, request: Request):
         raise HTTPException(404, str(e))
     except Exception as e:  # the model server is stopped, or the reply is not valid
         raise HTTPException(503, f"No review: {e}")
+
+
+async def _ask_calls() -> list[dict[str, Any]]:
+    """The calls of the tools of Ask since the start of its run (ADR-0030)."""
+    if "started" not in ask.run:
+        return []
+    rows = await _fetch("SELECT tool, arguments, ok, ms FROM tool_calls WHERE called_at >= $1 AND tool = ANY($2) "
+                        "ORDER BY id", ask.run["started"], list(ask.TOOLS))
+    for r in rows:
+        arguments = r["arguments"]
+        r["detail"] = arguments.get("query") or f"paper {arguments.get('paper_id')}, chunks {arguments.get('chunk_indexes')}"
+    return rows
+
+
+@app.get("/ask")
+async def ask_page(request: Request):
+    return _page(request, "ask.html", run=ask.run, calls=await _ask_calls(), models=ask.models())
+
+
+@app.post("/ask")
+async def ask_question(request: Request):
+    """{"question", "model"}: starts a run of the harness of model (ADR-0030);
+    the page then reads /ask/progress."""
+    body = await request.json()
+    question = (body.get("question") or "").strip()
+    if not question:
+        raise HTTPException(422, "The question is empty.")
+    if body.get("model") not in ask.models():
+        raise HTTPException(422, f"Unknown model {body.get('model')!r}.")
+    try:
+        ask.start(question, body["model"])
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"status": "running"}
+
+
+@app.get("/ask/progress")
+async def ask_progress():
+    seconds = ask.run.get("seconds") or (round(time.monotonic() - ask.run["clock"]) if "clock" in ask.run else 0)
+    return {"status": ask.run["status"], "seconds": seconds,
+            "calls": [{k: c[k] for k in ("tool", "detail", "ok", "ms")} for c in await _ask_calls()]}
 
 
 @app.get("/how")

@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-19 (after `21c20f7`)
+**Updated:** 2026-10-22 (after `88a0426`)
 
 <!--
 CONVENTION -- read before editing.
@@ -23,24 +23,19 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 ## Blocked on a human
 
-- **Fumi commits `phdcode backup`, then the chunk links.** The messages are in the vault: `Projects/phdcode/agents/commits/11-code-backup.md` and `12-code-chunk-links.md`.
-- **18 PDFs of the import failed to download**: 16 publishers answered 403 (Wiley, MDPI, ScienceDirect, ASCO, JAMA, BMJ, JNCCN), 1 link is dead (404), 1 returned a web page. A browser user agent also gets 403. Fumi downloads them; `phdcode queue FILES`, then `phdcode ingest` and `phdcode summarize`. The interface lists them (filter "PDF failed").
-- **The documentation site is built, not deployed.** `mkdocs.yml` and `wrangler.jsonc` follow the tea site. Fumi connects the repository to a Cloudflare Worker (build: `pip install "mkdocs>=1.6,<2" "mkdocs-material>=9.5" "mkdocstrings[python]>=0.24" && mkdocs build`; deploy: `npx wrangler deploy`), adds the domain, and scopes Cloudflare Access to that Worker only.
-- **The sweep timer is not installed.** The commands are in `llm_engine/systemd/phdcode-sweep.timer`. The service runs the sweep, then `phdcode ingest`, then `phdcode summarize`.
-- **The first sweep of the 10 saved searches** (created 2026-10-12 from the interest profile; the profile is the set of saved searches) waits for Fumi's yes; then the sweep timer.
+- **Fumi drops the 9 tables of the old general assistant** (`conversations`, `conversation_turns`, `turn_actions`, `documents`, `document_chunks`, `document_keywords`, `hooks`, `oauth_credentials`, `tool_result_cache`). No code uses them. The dump is `logs/backup/alira-old-tables-2026-10-22.sql.gz` (all 9 tables). The auto mode of Claude Code refuses a `DROP TABLE`.
+- **Fumi deletes the 181 old CSV files** in `logs/papers/*/tables/` (the parse stopped writing them in `30bde75`; nothing reads them): `find logs/papers -path '*/tables/*.csv' -delete && find logs/papers -type d -name tables -empty -delete`.
+- **2 PDFs of the import still fail** (ASCO answers 403): paper 30 (DNA methylation signatures, JCO 2012) and paper 43 (active surveillance cohort, JCO 2014). Fumi downloads them; then `phdcode queue FILES`.
 - **11 Zotero PDFs are on the Mac** (`/Users/fuminaba/Zotero/storage`). With a copy on the server, `phdcode queue FILES` puts each into the queue of its paper.
-- **The shadow score of the System One head and the log of MCP tool calls** (ADR-0028) are built and tested, not committed; the message is in the vault: `Projects/phdcode/agents/commits/25-code-system-one-data.md`. The live schema has `head_probability` and `tool_calls`; the 81 week-1 hits have their head score (AUC 0.836 on the labels, against 0.766 for the stored triage probabilities). The sweep timer is still not installed, so `phdcode headscore` runs only by hand until then.
-- **Fumi labels the hits on the page Labels** (ADR-0027, not committed; the message is in the vault: `Projects/phdcode/agents/commits/24-code-labels.md`). The live schema has the new columns, and the week-1 labels of the vault note `Projects/phdcode/notes/2026-10-12 Triage labels week 1.md` are imported: 81 hits, 26 relevant (the sections Search 11 to 14 are under the cancelled searches 2, 4, 5 and 6, which they replaced on 2026-10-13). The threshold 0.3 rests on them (ADR-0018). A label does not add a paper to the library; the agent saves a paper with `save_paper`.
-- **The old rows in Postgres.** The old tables hold 2 documents, 51 chunks, 24 conversations and 7 hooks. Fumi decides: export them, or drop the old tables. The new tables do not touch them.
-- **The server needs a reboot** for the NVIDIA driver (the library is 595.99, the kernel module 595.91). Only NVML fails (`nvidia-smi`); CUDA works. Until the reboot, `gpu.free_vram_mib()` reads the free VRAM through a PyTorch child process (3 s instead of an instant `nvidia-smi`).
+- **BM25 (ADR-0029) is not measured on quality.** The test: Fumi labels the top 10 of the old and the new search for about 20 logged queries (`tool_calls`), and nDCG@10 compares them.
+- **The page Ask (ADR-0030) is tested with Claude Haiku 5.5 only** (14 s, 8 of 8 quotes found, twice). The dcode run with Bonsai 2 is not tested on the page: on 2026-10-22 another GPU process held 5.9 GB, and llama-server needs 14.4 GB. Test it when the GPU is free.
+- **Fumi labels the hits on the page Labels** (ADR-0027). 81 hits have labels (the week-1 import). The threshold 0.3 rests on them (ADR-0018).
 
 ## In progress
 
-The PDF queue of the import ended on 2026-10-12 at 16:26 PDT (3 h 28 min: the parses on the GPU, then the Bonsai summaries, then `phdcode backup`). 31 of 81 papers have full text and summaries; 18 PDFs failed (see above).
-
-Built and tested, not committed: the chunk links (`phdcode rechunk`, the tool `get_chunks`) and `phdcode queue` (a local PDF to its stored paper, by its DOI, its arXiv ID or its title; else a new paper). `phdcode rechunk` of the 31 full-text papers took 33 minutes (2,171 chunks, 3,498 links), because the CPU embeddings are slower than 57 ms for each chunk.
-
-Committed in `7cfc5c0`: the daily questions (ADR-0020: the model choice on the page, skip, topics, statistics) and the sort of the papers list. Tested once with Bonsai before the topics were added (question 36 s, grades 7 to 16 s, a fair split of a good and a vague answer). Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5 are routes in `.env` (`'provider': 'claude-code'`: `claude -p` on Fumi's Claude login, no API key); Haiku 5.5 tested: question 10 s, grades 7 to 10 s, valid topic tags; no paper is marked crucial yet, so the questions come from the whole library. Committed in `22fc36b`: the axis sets, the steering by competency and question type, and the key points (ADR-0021); Haiku 5.5 tested on phdcode_test. Committed in `26016ed`: answer again with a score history (ADR-0022, table `attempts`) and the tutor chat (ADR-0023, table `question_chat`; Haiku 5.5 tested). Committed in `7362b50`: the page Digests as collapsible day cards (`sweep.parse_digest` reads the digest files). Not committed: the page Paper of the day (ADR-0024, table `daily_papers`) and the writing coach (ADR-0025, tables `writing_prompts` and `writing_attempts`); tested with a fake model on phdcode_test, not yet with a real model.
+- **The first timed sweep runs on 2026-10-23 at 06:00 PDT** (`phdcode-sweep.timer`, installed 2026-10-22). Its first step, `phdcode ingest`, parses the 16 PDFs that `phdcode queue` put into the queue on 2026-10-22 (from Fumi's download folder; 15 matched by DOI, 1 by title). Then the sweep of the 14 saved searches, `headscore`, `summarize` and `backup`. Look at the result in `journalctl --user -u phdcode-sweep.service` and on the page Digests.
+- The library: 117 papers, 31 with full text (2,171 chunks) before that ingest.
+- The page Paper of the day (ADR-0024) and the writing coach (ADR-0025) are tested with a fake model only, not yet with a real model.
 
 Not done (Fumi's plans, 2026-10-14): textbooks as sources (for axes such as ML foundations): `embed()` needs batches first, a book has no methods or results summary, and its questions need chapters, not the abstract. A thesis section: the thesis in LaTeX on Overleaf, synced to GitHub; phdcode would read the `.tex` files of a clone (no PDF parse) and chunk them by section. The user's own papers as a separate kind.
 
@@ -48,7 +43,9 @@ Not done: tracking of authors, research groups and labs (Fumi's wish, 2026-10-12
 
 Not done: the `balanced` mode (Surya, marker 2), deferred by ADR-0017 item 9. `embed()` sends all chunks in one request (600 s timeout); add batches before a book or a thesis goes in.
 
-Earlier tests (steps 3 and 4) are in the commit messages. The test scripts are not in the repo (no `tests/` folder yet).
+Not done: the systemd install steps are written in 4 places (the comments of the units and the docs).
+
+The test scripts are not in the repo (no `tests/` folder yet).
 
 ## Known traps
 
@@ -56,19 +53,19 @@ Earlier tests (steps 3 and 4) are in the commit messages. The test scripts are n
 - **The Docker Compose project is `alira2`**, from the old repository name; `docker-compose.yml` pins `name: alira2`. Without it, `docker compose up` makes a new, empty project `phdcode`, and port 5432 is already in use.
 - **mcp 2.x is not the API of most examples.** `FastMCP` is `MCPServer` (`mcp.server.mcpserver`); client results use `structured_content` and `is_error`. Only a `ToolError` shows its message to the agent.
 - **OpenAlex with no key has a budget of $0.10 a day: 100 searches.** A lookup by ID is free. A bad filter or a spent budget comes back as an HTTP 400 or 429 with the reason in the body; the client raises it as a `ValueError`. The filter `from_created_date` needs a paid plan. A key goes into `OPENALEX_API_KEY`.
-- **Triage needs llama-server** (ADR-0018): during training (`phdcode gpu clear`) the hits wait, and the next sweep looks back to the last complete sweep of each search.
+- **Triage needs llama-server** (ADR-0018): during training (`phdcode gpu clear`) the hits wait, and the next sweep looks back to the last complete sweep of each search. Another GPU process with too little VRAM left also makes them wait.
 - **PubMed's `pdf_url` is the PMC article page, not a PDF.** `ingest_pdf` refuses it and asks for a local path.
-- **`phdcode-mcp` uses the live database** (`DATABASE_URL` in `.env`). Its first start creates the new tables there, beside the old ones. A test sets `DATABASE_URL` to `phdcode_test` in the environment, which now wins over `.env`.
+- **`phdcode-mcp` uses the live database** (`DATABASE_URL` in `.env`). A test sets `DATABASE_URL` to `phdcode_test` in the environment, which wins over `.env`.
+- **A running `phdcode-mcp` keeps the code of its start.** Each agent session starts its own; a change to the search reaches only new sessions.
+- **The keyword side ignores the websearch syntax** (`"phrase"`, `-word`) since ADR-0029: BM25 ranks a bag of words.
 - **Headless dcode (`dcode -n`) rejects each MCP tool without `readOnlyHint`**, because it has no approval prompt. The read-only tools declare it; `ingest_pdf`, `save_paper` and the saved-search writes need the dcode TUI, which asks.
 - **An output schema stops each dcode run at the first tool result** with `BlockingError` (dcode 0.1.73): the MCP client validates the result and imports `jsonschema` on the event loop of the LangGraph server. The tools send JSON text with no schema. `LANGGRAPH_ALLOW_BLOCKING` does not help, because dcode sets it. The traceback is in the server log that `DEEPAGENTS_CODE_DEBUG=1` keeps.
-- **The overview page of the interface takes about 3 s** while NVML fails (the driver mismatch before the reboot): the free VRAM then comes from a PyTorch child process.
 - **Ollama is outside the GPU rules.** A model that Ollama loads (for example gpt-oss for a test) holds VRAM that `phdcode gpu check` and the short jobs then miss; with Bonsai loaded, a second model does not fit. Unload it after a test: `ollama stop <model>`.
-- **The test database and the live database share `logs/papers/`**, and their paper IDs overlap: a test PDF stayed in the folder of live paper 6. A test must also set `LOG_DIR` to another folder. The old test folders are in `logs/test-papers/` (the rows of `phdcode_test` still point to `logs/papers/`). An ingest now empties the folder of its paper first. The bin (ADR-0026) deletes `logs/papers/<id>` for good: a TestClient test of the interface sets `dashboard.PAPERS_DIR` to a temporary folder.
+- **The test database and the live database share `logs/papers/`**, and their paper IDs overlap. A test must also set `LOG_DIR` to another folder. The old test folders are in `logs/test-papers/`. An ingest empties the folder of its paper first. The bin (ADR-0026) deletes `logs/papers/<id>` for good: a TestClient test of the interface sets `dashboard.PAPERS_DIR` to a temporary folder.
 - **Do not nest `gpu.short_job()`.** The lock is not re-entrant: an inner job cannot take the lock that the outer one holds, so it waits, then runs on the CPU.
 - **A systemd stop of llama-server sent SIGTERM to the router and its model process at once, and the router hung until the 90-s stop timeout.** `KillMode=mixed` sends it to the router only; a stop now takes about 3 s.
 - **A start condition that skips llama-server does not fail the proxy that requires it**; a stale proxy then refused each request. The proxy uses `BindsTo=`, and `phdcode gpu clear` stops the socket.
-
-- **The arXiv API refuses after many queries in a short time** (HTTP 429, and read timeouts of 15 s; 2026-10-12, after about 40 test searches in some hours). A test script must cache its hits and wait between arXiv requests. The sweep does not mark a failed search as swept, so the next sweep looks back far enough.
+- **The arXiv API refuses after many queries in a short time** (HTTP 429, and read timeouts of 15 s). A test script must cache its hits and wait between arXiv requests. The sweep does not mark a failed search as swept, so the next sweep looks back far enough.
 - **`/tmp` on fuminaba-server is a 16 GB RAM disk (tmpfs).** Put large downloads and environments under the home folder.
 
 ## Tried and rejected
@@ -80,10 +77,11 @@ Recorded here only where the ADRs do not cover it:
 
 ## Running where
 
-- **`phdcode-llm-proxy.socket`** (systemd user unit, enabled) listens on port 8080. It starts llama-server with Bonsai 2 27B at the first request; llama-server holds 14.4 GB of VRAM and `/tmp/gpu.lock` until 30 minutes after the last request. Check: `systemctl --user is-active phdcode-llm-proxy.socket phdcode-llm.service`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-llm`.
-- **`phdcode-dashboard.service`** (systemd user unit, enabled): the web interface at http://100.110.224.47:8620 (writes `papers.importance`, `papers.notes`, `papers.read_at`, `papers.deleted_at`, the tables `questions` and `settings`, ADR-0019, ADR-0020 and ADR-0026; it deletes the papers of the bin for good after the bin days, with their folders), on the Tailscale address only. It reads `.env` at start: restart it after a change. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-dashboard`.
+- **`phdcode-llm-proxy.socket`** (systemd user unit, enabled) listens on port 8080 of the Tailscale address and of `127.0.0.1` only (the local drop-in `~/.config/systemd/user/phdcode-llm-proxy.socket.d/override.conf`, 2026-10-22, with `FreeBind=true`). It starts llama-server with Bonsai 2 27B at the first request; llama-server holds 14.4 GB of VRAM and `/tmp/gpu.lock` until 30 minutes after the last request. Check: `systemctl --user is-active phdcode-llm-proxy.socket phdcode-llm.service`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-llm`.
+- **`phdcode-sweep.timer`** (systemd user unit, enabled 2026-10-22): `phdcode-sweep.service` each day at 06:00, `Persistent=true`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-sweep`.
+- **`phdcode-dashboard.service`** (systemd user unit, enabled): the web interface on port 8620 of the Tailscale address only (it writes `papers.importance`, `papers.notes`, `papers.read_at`, `papers.deleted_at`, the tables `questions` and `settings`; it deletes the papers of the bin for good after the bin days, with their folders). It reads `.env` at start: restart it after a change. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-dashboard`.
 - Postgres (`alira2-postgres-1`) runs in Docker, with the test database `phdcode_test`. Redis (`alira2-redis-1`) still runs, but nothing uses it.
 - The MCP server is registered in Claude Code (`claude mcp add phdcode`) and in dcode (`~/.deepagents/.mcp.json`, user level, outside the repo); each session starts its own `phdcode-mcp`.
-- The live database holds paper 1 (the nuclei local/global PDF, full text, 17 chunks) from the dcode RAG test on 2026-10-12.
+- The repo `fuminaba/phdcode` is public, and the docs are at `https://phdcode.fuminaba.com` (the Cloudflare Worker `phdcode-docs`).
 
-Python environment is the conda env `alira`, with phdcode installed editable (`pip install --no-deps -e .`) and `mcp` 2.3.0. It has no pytest.
+Python environment is the conda env `alira`, with phdcode installed editable (`pip install --no-deps -e .`) and `mcp` 2.3.0. It has no pytest and no polars.

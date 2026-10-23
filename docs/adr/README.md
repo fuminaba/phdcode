@@ -41,6 +41,7 @@ superseded most of them. Read 0006 and 0014 to 0028 for the current design.
 | [0027](0027-label-every-judged-hit.md) | The user labels every judged hit | Accepted |
 | [0028](0028-data-for-system-one-heads.md) | Data for System One heads: a shadow score of triage and a log of tool calls | Accepted |
 | [0029](0029-bm25-keyword-search.md) | BM25 ranks the keyword side of the hybrid search | Accepted |
+| [0030](0030-ask-page.md) | The page Ask: an agent answers in the interface, with the local read-only tools only | Accepted |
 
 An ADR is valid while its premises are true. To re-open one, name the premise
 that changed, and supersede it in a new ADR. Edit only the status line of the
