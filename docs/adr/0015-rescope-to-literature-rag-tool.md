@@ -1,6 +1,6 @@
 # ADR-0015: Rescope phdcode to a literature RAG tool
 
-**Status:** Accepted — 2026-10-10. Item 7 (Triage) superseded by [ADR-0018](0018-triage-by-the-library.md) on 2026-10-12.
+**Status:** Accepted — 2026-10-10. Item 7 (Triage) superseded by [ADR-0018](0018-triage-by-the-library.md) on 2026-10-12. Item 1 amended by [ADR-0030](0030-ask-page.md).
 **Supersedes:** ADR-0001, 0002, 0003, 0004, 0009, 0010, 0011, 0012. With it,
 [ADR-0016](0016-mcp-server-is-the-only-integration.md) supersedes 0005 and
 [ADR-0017](0017-gpu-main-slot.md) supersedes 0007 and 0008.

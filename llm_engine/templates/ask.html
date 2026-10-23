@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Ask · phdcode{% endblock %}
+{% block main %}
+<h1>Ask</h1>
+<div class="panel">
+  <textarea id="question" placeholder="A question about the papers in your library">{{ run.question or "" }}</textarea>
+  <div class="models" style="margin-top:8px">
+    <label>Model <select id="ask-model">{% for m in models %}<option{{ " selected" if m == run.model }}>{{ m }}</option>{% endfor %}</select></label>
+    <button class="go" id="ask"{{ " disabled" if run.status == "running" }}>Ask</button> <span class="msg bad"></span>
+  </div>
+  <p class="muted">An agent searches your library and answers with quotes. bonsai2-27b runs on the GPU of the server (dcode, a few minutes); the Claude models use your Claude login.</p>
+</div>
+
+{% if run.status == "running" %}
+<div class="panel">
+  <p><b>The agent is working</b> · <span id="seconds">0</span> s</p>
+  <ol id="calls">{% for c in calls %}<li>{{ c.tool }}: {{ c.detail }}</li>{% endfor %}</ol>
+</div>
+{% elif run.status == "failed" %}
+<div class="panel"><p class="bad">No answer: {{ run.error }}</p></div>
+{% elif run.status == "done" %}
+{% set found = run.quotes|selectattr("found")|list %}
+<div class="panel">
+  <p>
+    <span class="tag {{ 'ok' if found|length == run.quotes|length else 'bad' }}">quotes found: {{ found|length }} of {{ run.quotes|length }}</span>
+    <span class="muted">{{ run.model }} · {{ run.seconds }} s · {{ calls|length }} tool calls</span>
+  </p>
+  {{ run.answer|md_cites }}
+  {% if found|length < run.quotes|length %}
+  <details><summary>Quotes not found in the cited papers</summary>
+    <ul>{% for q in run.quotes if not q.found %}<li>{{ q.quote }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  <details><summary>Searches of the agent</summary>
+    <ol>{% for c in calls %}<li>{{ c.tool }}: {{ c.detail }}</li>{% endfor %}</ol>
+  </details>
+</div>
+{% endif %}
+
+<script>
+// The chosen model stays for the next visit, in this browser only.
+const model = document.getElementById("ask-model");
+try {
+  const saved = localStorage.getItem(model.id);
+  if ({{ "false" if run.model else "true" }} && [...model.options].some(o => o.value === saved)) model.value = saved;
+  model.addEventListener("change", () => { try { localStorage.setItem(model.id, model.value); } catch {} });
+} catch {}
+document.getElementById("ask").addEventListener("click", e =>
+  post(e.target, "/ask", {question: document.getElementById("question").value, model: model.value}));
+{% if run.status == "running" %}
+// The page reads the progress every 2 s, and reloads when the run ends.
+setInterval(async () => {
+  const p = await (await fetch("/ask/progress")).json();
+  if (p.status !== "running") return location.reload();
+  document.getElementById("seconds").textContent = p.seconds;
+  const list = document.getElementById("calls");
+  list.replaceChildren(...p.calls.map(c => Object.assign(document.createElement("li"), {textContent: `${c.tool}: ${c.detail}`})));
+}, 2000);
+{% endif %}
+</script>
+{% endblock %}

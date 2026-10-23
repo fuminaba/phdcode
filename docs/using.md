@@ -38,6 +38,17 @@ When a passage mentions a figure or a table, the agent can read the chunk with i
 
 If a claim rests only on an abstract, the agent says so: the paper has no full text.
 
+### On the page Ask
+
+The interface has the same agent on its page Ask (ADR-0030). Type the question, select the model, and click Ask:
+
+- **bonsai2-27b** runs dcode with Bonsai 2 on llama-server: a few minutes, and it waits while the GPU is cleared.
+- **A Claude model** runs Claude Code (`claude -p`) on your Claude login: about 15 s.
+
+While the agent works, the page shows each search. The answer cites each paper as `[P<id>]`, a link to its page. A tag shows how many quotes of the answer the page found word for word in the cited papers. The quotes that it did not find are in the closed section under the answer.
+
+The agent on this page has three tools only: `search_papers`, `search_chunks` and `get_chunks`. It cannot change the library or search outside it. One question runs at a time. The page keeps only the last answer, until the interface restarts.
+
 ## Add papers
 
 ### From a reference list
