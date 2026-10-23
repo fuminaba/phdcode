@@ -1,7 +1,96 @@
 {% extends "base.html" %}
+{% block head %}
+<style>
+/* The series of the activity chart, in the fixed order of ACTIVITY (dashboard.py). */
+:root { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; }
+@media (prefers-color-scheme: dark) { :root { --s1: #3987e5; --s2: #d95926; --s3: #199e70; } }
+.chart { width: 100%; max-width: 640px; height: auto; display: block; }
+.chart text { fill: var(--muted); font-size: 11px; }
+.chart .base { stroke: var(--line); }
+.chart .grid { stroke: var(--line); stroke-dasharray: 2 3; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; margin-bottom: 6px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+.activity { display: flex; flex-wrap: wrap; gap: 14px 32px; align-items: flex-start; }
+</style>
+{% endblock %}
 {% block main %}
 <h1>Overview</h1>
 
+<div class="cards" style="margin-bottom:14px">
+  <div class="card"><div class="n">{{ activity.current }}</div><div class="l">day streak</div></div>
+  <div class="card"><div class="n">{{ activity.longest }}</div><div class="l">longest streak</div></div>
+  <div class="card"><div class="n">{{ activity.this_week }}</div><div class="l">activities this week</div></div>
+  <div class="card"><div class="n">{{ activity.today }}</div><div class="l">activities today</div></div>
+</div>
+
+<div class="panel activity">
+  <div style="flex:1 1 380px">
+    <b>Each week</b> <span class="muted">(last {{ activity.weeks|length }} weeks)</span>
+    <div class="legend">{% for kind in activity_kinds %}<span><i style="background:var(--s{{ loop.index }})"></i>{{ kind }}</span>{% endfor %}</div>
+    {% set n_weeks = activity.weeks|length %}
+    {% set peak = [activity.weeks|map(attribute=1)|map("sum")|max, 1]|max %}
+    {% set step = 560 / n_weeks %}
+    <svg class="chart" viewBox="0 0 600 170" role="img" aria-label="Activities each week, by kind; the table below has the numbers">
+      <line class="grid" x1="30" x2="590" y1="14" y2="14"/><text x="24" y="18" text-anchor="end">{{ peak }}</text>
+      <line class="base" x1="30" x2="590" y1="140" y2="140"/><text x="24" y="144" text-anchor="end">0</text>
+      {% for monday, counts in activity.weeks %}
+        {% set x = 30 + loop.index0 * step + step * 0.2 %}
+        {% set bar = namespace(y=140) %}
+        {% for n in counts %}{% if n %}{% set h = n / peak * 126 %}
+          <rect x="{{ x }}" y="{{ bar.y - h }}" width="{{ step * 0.6 }}" height="{{ [h - 2, 1]|max }}" rx="2" fill="var(--s{{ loop.index }})"><title>Week of {{ monday }}: {{ n }} {{ activity_kinds[loop.index0] }}</title></rect>
+          {% set bar.y = bar.y - h %}
+        {% endif %}{% endfor %}
+        {% if (n_weeks - loop.index) % 2 == 0 %}<text x="{{ x + step * 0.3 }}" y="158" text-anchor="middle">{{ monday.strftime("%b %-d") }}</text>{% endif %}
+      {% endfor %}
+    </svg>
+    <details><summary class="muted">The numbers</summary>
+      <table style="width:auto"><tr><th>Week of</th>{% for kind in activity_kinds %}<th>{{ kind }}</th>{% endfor %}</tr>
+      {% for monday, counts in activity.weeks|reverse %}<tr><td>{{ monday }}</td>{% for n in counts %}<td>{{ n }}</td>{% endfor %}</tr>{% endfor %}
+      </table>
+    </details>
+  </div>
+  <div>
+    <b>Each day</b> <span class="muted">(last {{ activity.calendar|length }} weeks)</span>
+    <div class="cal" style="margin-top:6px" role="img" aria-label="Activities each day: {{ activity.total }} in all, {{ activity.today }} today">
+    {% for week in activity.calendar %}{% for day, n in week %}<div class="l{{ [n, 3]|min }}" title="{{ day }}: {{ n }}"></div>{% endfor %}{% endfor %}
+    </div>
+    <div class="key muted">Less <i></i><i class="l1"></i><i class="l2"></i><i class="l3"></i> More</div>
+    <p class="muted" style="font-size:13px">An activity: a question answered, a writing task<br>answered or revised, a paper marked as read.</p>
+  </div>
+</div>
+
+<h2>Paper of the day</h2>
+<div class="panel">
+{% if not brief %}
+  <p class="muted">No paper yet today. The model picks a library paper that was not featured before and writes a brief for your defence.</p>
+  <div class="models">
+    <label>Model <select id="question-model">{% for m in models %}<option{{ " selected" if m == default_model }}>{{ m }}</option>{% endfor %}</select></label>
+    <button class="go" id="new">Show today's paper</button> <span class="msg bad"></span>
+  </div>
+{% else %}
+  <h3 style="margin:0"><a href="/papers/{{ p.id }}">{{ p.title }}</a></h3>
+  <div class="muted">{{ (p.authors or [])[:3]|join(", ") }}{{ " et al." if (p.authors or [])|length > 3 }} · {{ (p.published_date or "")[:4] }}{{ " · " ~ p.venue if p.venue }}
+    {% if not p.parse_mode %} · <span class="warn">abstract only: the brief is thin</span>{% endif %}</div>
+  <p>{{ brief.about }}</p>
+  <details><summary>Summary, key points and examiner questions</summary>
+    <p>{{ brief.summary }}</p>
+    <p><b>Know this for your defence:</b></p><ul>{% for k in brief.key_points %}<li>{{ k }}</li>{% endfor %}</ul>
+    <p><b>An examiner could ask:</b></p><ul>{% for k in brief.examiner_questions %}<li>{{ k }}</li>{% endfor %}</ul>
+    <p class="muted">Written by {{ brief.model or "?" }} from the abstract and the summaries. Check a number in the paper before you quote it.</p>
+  </details>
+  <div class="models" style="margin-top:10px">
+    <label>Model <select id="question-model">{% for m in models %}<option{{ " selected" if m == default_model }}>{{ m }}</option>{% endfor %}</select></label>
+    <button class="go alt" id="new">Another paper</button> <span class="msg bad"></span>
+  </div>
+{% endif %}
+{% if earlier %}
+  <details><summary class="muted">Earlier papers of the day ({{ earlier|length }})</summary>
+  {% for d in earlier %}<div style="margin:6px 0"><span class="muted">{{ d.day }}</span> · <a href="/papers/{{ d.paper_id }}">{{ d.title }}</a></div>{% endfor %}
+  </details>
+{% endif %}
+</div>
+
+<h2>Library</h2>
 <div class="cards">
   <div class="card"><div class="n">{{ counts.papers }}</div><div class="l">papers</div></div>
   <div class="card"><div class="n">{{ counts.full_text }}</div><div class="l">full-text papers</div></div>
@@ -10,21 +99,18 @@
   <div class="card"><div class="n">{{ counts.triaged }}</div><div class="l">hits judged by triage</div></div>
   <div class="card"><div class="n">{{ pending|length }}</div><div class="l">papers with pending model steps</div></div>
 </div>
-
-<h2>Papers by state</h2>
-<div class="panel">
-{% if states %}
-  {% for state, n in states.items() %}<div>{{ n }} &nbsp;<span class="tag">{{ state }}</span></div>{% endfor %}
-{% else %}<span class="muted">No papers yet.</span>{% endif %}
-{% if states.get("PDF queued") %}<p class="warn">{{ states["PDF queued"] }} PDFs wait in the queue: run <code>phdcode ingest</code>, then <code>phdcode summarize</code>.</p>{% endif %}
-{% if states.get("PDF failed") %}<p class="bad">{{ states["PDF failed"] }} PDFs failed: the reason is on the page of each paper (filter the <a href="/papers">papers</a> by "PDF failed").</p>{% endif %}
+{% if states.get("PDF queued") %}<p class="warn">{{ states["PDF queued"] }} PDFs wait in the queue: the next upload or the daily sweep parses them.</p>{% endif %}
+{% if states.get("PDF failed") %}<p class="bad">{{ states["PDF failed"] }} PDFs failed: filter the <a href="/papers">papers</a> by "PDF failed", and upload each PDF on the page of its paper.</p>{% endif %}
 {% if pending %}
-  <p class="warn">Pending model steps (run <code>phdcode summarize</code>):
+  <p class="warn">Pending model steps (the daily sweep runs them):
   {% for p in pending %}<a href="/papers/{{ p.id }}">paper {{ p.id }}</a>{{ " (metadata)" if p.needs_metadata }}{{ ", " if not loop.last }}{% endfor %}</p>
 {% endif %}
-</div>
 
-<h2>What runs</h2>
+<details class="panel" style="margin-top:14px"><summary><b>Papers by state</b></summary>
+{% for state, n in states.items() %}<div>{{ n }} &nbsp;<span class="tag">{{ state }}</span></div>{% else %}<span class="muted">No papers yet.</span>{% endfor %}
+</details>
+
+<details class="panel"><summary><b>What runs</b></summary>
 {% set u = system.units %}
 <div class="scroll"><table>
 <tr><th>Part</th><th>State</th><th>Details</th></tr>
@@ -46,10 +132,24 @@
   <td>{% if s.ExecMainExitTimestamp %}{{ s.Result }}{% else %}<span class="muted">never</span>{% endif %}</td>
   <td>{{ s.ExecMainExitTimestamp }}{% if last_digest %}{{ "; " if s.ExecMainExitTimestamp }}latest digest: <a href="/digests?day={{ last_digest }}">{{ last_digest }}</a>{% endif %}</td></tr>
 </table></div>
+</details>
 
-<h2>Configuration</h2>
+<details class="panel"><summary><b>Configuration</b></summary>
 <div class="scroll"><table>
 {% for name, value in config %}<tr><td>{{ name }}</td><td><code>{{ value }}</code></td></tr>{% endfor %}
 </table></div>
 <p class="muted">From <code>.env</code> and the code, read when this interface started. Secrets are not shown.</p>
+</details>
+
+<script>
+// The chosen model stays for the next visit, in this browser only (shared with Questions).
+const model = document.getElementById("question-model");
+try {
+  const saved = localStorage.getItem(model.id);
+  if ([...model.options].some(o => o.value === saved)) model.value = saved;
+  model.addEventListener("change", () => { try { localStorage.setItem(model.id, model.value); } catch {} });
+} catch {}
+document.getElementById("new").addEventListener("click", e =>
+  post(e.target, "/paper-of-the-day/new", {model: model.value}));
+</script>
 {% endblock %}

@@ -17,11 +17,13 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
+from collections import Counter
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -33,10 +35,10 @@ from . import ask, gpu, questions, writing
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
-from .memory import close_pool, get_paper, get_pool, pending_papers
-from .memory.db import HITS_JOIN
+from .memory import close_pool, get_paper, get_pool, pending_papers, queue_local_pdfs
+from .memory.db import HITS_JOIN, add_saved_search, cancel_saved_search, update_saved_search
 from .memory.document_index import CHUNK_OVERLAP, CHUNK_SIZE, MAP_CHUNK_SIZE
-from .sources import OPENALEX_API_KEY, PUBMED_API_KEY
+from .sources import OPENALEX_API_KEY, PUBMED_API_KEY, SOURCES
 from .sweep import DIGEST_DIR, LOOKBACK_DAYS, MAX_HITS, parse_digest
 from .triage import TRIAGE_MODEL
 
@@ -190,8 +192,36 @@ async def overview(request: Request):
     for p in papers:
         states[_paper_state(p)] = states.get(_paper_state(p), 0) + 1
     digests = sorted(DIGEST_DIR.glob("*.md"), reverse=True)
+    brief = await questions.daily_paper()
+    earlier = await _fetch("SELECT d.*, p.title FROM daily_papers d JOIN papers p ON p.id = d.paper_id "
+                           "WHERE d.day < $1 ORDER BY d.day DESC", date.today())
     return _page(request, "overview.html", counts=counts[0], states=states, pending=pending,
-                 system=system, config=_config(), last_digest=digests[0].name if digests else None)
+                 system=system, config=_config(), last_digest=digests[0].name if digests else None,
+                 activity=await _activity(), activity_kinds=ACTIVITY, brief=brief, p=await get_paper(brief["paper_id"]) if brief else None,
+                 earlier=earlier, models=questions.models(), default_model=questions.QUESTION_MODEL)
+
+
+# The kinds of activity of the overview, in the order of their colours.
+ACTIVITY = ("questions answered", "writing tasks", "papers read")
+
+
+async def _activity(weeks: int = 12) -> dict[str, Any]:
+    """The streaks and the calendar of all activity, and the count of each
+    kind in each of the last weeks (Monday first, the last holds today)."""
+    rows = await _fetch(
+        "SELECT 0 AS kind, answered_at AS at FROM attempts "
+        "UNION ALL SELECT 1, graded_at FROM writing_attempts "
+        "UNION ALL SELECT 2, read_at FROM papers WHERE read_at IS NOT NULL AND deleted_at IS NULL")
+    stamps = [(r["kind"], r["at"].astimezone().date()) for r in rows]
+    today = date.today()
+    first = today - timedelta(days=today.weekday() + 7 * (weeks - 1))
+    by_week = [[0] * len(ACTIVITY) for _ in range(weeks)]
+    for kind, day in stamps:
+        if day >= first:
+            by_week[(day - first).days // 7][kind] += 1
+    return {**questions.days(Counter(day for _, day in stamps)),
+            "weeks": [(first + timedelta(days=7 * w), counts) for w, counts in enumerate(by_week)],
+            "this_week": sum(by_week[-1]), "total": len(stamps)}
 
 
 @app.get("/papers")
@@ -262,6 +292,38 @@ async def move_to_bin(paper_id: int, restore: bool = False):
     await _update_paper(paper_id, "deleted_at = CASE WHEN $2 THEN NULL ELSE coalesce(deleted_at, now()) END", restore)
 
 
+# An uploaded PDF stays here: the queue holds its path (ADR-0031).
+UPLOAD_DIR = PAPERS_DIR.parent / "uploads"
+
+
+@app.post("/papers/upload")
+async def upload_pdf(request: Request, name: str, paper: Optional[int] = None):
+    """The body is one PDF: it goes into the queue of its paper (`paper`, or
+    the paper that its DOI, arXiv ID or title finds, or a new paper), and
+    the ingest starts (ADR-0031)."""
+    content = await request.body()
+    if not content.startswith(b"%PDF"):
+        raise HTTPException(422, f"{name} is not a PDF.")
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    path = UPLOAD_DIR / f"{datetime.now():%Y%m%d-%H%M%S}-{re.sub(r'[^\w.-]', '_', Path(name).name)}"
+    path.write_bytes(content)
+    report = (await queue_local_pdfs([path], paper))[0].replace(f"{path}: ", f"{name}: ")
+    return {"report": report, "started": await asyncio.to_thread(_start_ingest)}
+
+
+def _start_ingest() -> bool:
+    """Starts `phdcode ingest`, then `phdcode summarize`, as the transient
+    user unit phdcode-ingest, which a restart of the interface does not stop.
+    False if it runs already."""
+    # ponytail: a PDF queued while the unit runs waits for the next upload or the daily sweep.
+    if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "phdcode-ingest"]).returncode == 0:
+        return False
+    phdcode = Path(sys.executable).parent / "phdcode"
+    subprocess.run(["systemd-run", "--user", "--unit", "phdcode-ingest", "--collect", "--quiet", "-p", "Nice=10",
+                    "/bin/sh", "-c", f"{phdcode} ingest; {phdcode} summarize"], check=True)
+    return True
+
+
 async def _bin_days() -> int:
     rows = await _fetch("SELECT value FROM settings WHERE key = 'bin_days'")
     return int(rows[0]["value"]) if rows else 30
@@ -327,7 +389,9 @@ async def interests(request: Request):
     by_search: dict[int, list[dict[str, Any]]] = {}
     for h in hits:
         by_search.setdefault(h["saved_search_id"], []).append(h)
-    return _page(request, "interests.html", searches=searches, hits=by_search)
+    for s in searches:
+        s["name"] = _search_name(s["interest"])
+    return _page(request, "interests.html", searches=searches, hits=by_search, sources=SOURCES)
 
 
 def _search_name(interest: str) -> str:
@@ -335,6 +399,41 @@ def _search_name(interest: str) -> str:
     first example or parenthesis."""
     name = re.split(r" \(|, for example|, such as|, especially|, including", interest or "", maxsplit=1)[0]
     return name.rstrip(".") or "(no interest)"
+
+
+def _search_fields(body: dict[str, Any]) -> tuple[str, str, float]:
+    """The query, the interest and the threshold of a saved search, checked."""
+    query, interest = (body.get("query") or "").strip(), (body.get("interest") or "").strip()
+    try:
+        threshold = float(body.get("threshold"))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "The threshold must be a number.")
+    if not query or not interest:
+        raise HTTPException(422, "The query and the interest must not be empty.")
+    if not 0 <= threshold <= 1:
+        raise HTTPException(422, "The threshold must be between 0 and 1.")
+    return query, interest, threshold
+
+
+@app.post("/interests")
+async def new_saved_search(body: dict[str, Any] = Body(...)):
+    """{"source", "query", "interest", "threshold"}: a new saved search (ADR-0031)."""
+    if body.get("source") not in SOURCES:
+        raise HTTPException(422, f"The source must be one of {', '.join(SOURCES)}.")
+    return {"id": await add_saved_search(body["source"], *_search_fields(body))}
+
+
+@app.post("/interests/{saved_search_id}")
+async def edit_saved_search(saved_search_id: int, body: dict[str, Any] = Body(...)):
+    """{"query", "interest", "threshold"}: changes an active saved search."""
+    if not await update_saved_search(saved_search_id, *_search_fields(body)):
+        raise HTTPException(404, f"No active saved search {saved_search_id}.")
+
+
+@app.post("/interests/{saved_search_id}/cancel")
+async def cancel_search(saved_search_id: int):
+    if not await cancel_saved_search(saved_search_id):
+        raise HTTPException(404, f"No active saved search {saved_search_id}.")
 
 
 @app.get("/digests")
@@ -503,16 +602,6 @@ async def _model_body(request: Request, *fields: str) -> dict[str, Any]:
         if body.get(field) is not None and body[field] not in questions.models():
             raise HTTPException(422, f"Unknown model {body[field]!r}.")
     return body
-
-
-@app.get("/paper-of-the-day")
-async def paper_of_the_day(request: Request):
-    brief = await questions.daily_paper()
-    paper = await get_paper(brief["paper_id"]) if brief else None
-    earlier = await _fetch("SELECT d.*, p.title FROM daily_papers d JOIN papers p ON p.id = d.paper_id "
-                           "WHERE d.day < $1 ORDER BY d.day DESC", date.today())
-    return _page(request, "paper_of_the_day.html", brief=brief, p=paper, earlier=earlier,
-                 models=questions.models(), default_model=questions.QUESTION_MODEL)
 
 
 @app.post("/paper-of-the-day/new")

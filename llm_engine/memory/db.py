@@ -459,6 +459,16 @@ async def cancel_saved_search(saved_search_id: int) -> bool:
     return status == "UPDATE 1"
 
 
+async def update_saved_search(saved_search_id: int, query: str, interest: str, threshold: float) -> bool:
+    """Returns False if no active saved search has this id. The judged hits
+    stay; the next sweep runs the new query from the last sweep on."""
+    status = await (await get_pool()).execute(
+        "UPDATE saved_searches SET query = $2, interest = $3, threshold = $4 WHERE id = $1 AND cancelled_at IS NULL",
+        saved_search_id, query, interest, threshold,
+    )
+    return status == "UPDATE 1"
+
+
 async def triaged_source_ids(saved_search_id: int, source_ids: Sequence[str]) -> set[str]:
     """The source_ids that triage already judged for this saved search."""
     rows = await (await get_pool()).fetch(

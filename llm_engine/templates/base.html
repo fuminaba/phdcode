@@ -79,21 +79,51 @@ button.alt { background: none; color: var(--accent); }
 button.go:disabled { opacity: .6; cursor: wait; }
 .models { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 10px; font-size: 14px; }
 [hidden] { display: none !important; }
+.msg { white-space: pre-line; }
+/* The calendar of activity: the overview and the page Questions. */
+:root { --cal0: var(--code); --cal1: #86b6ef; --cal2: #3987e5; --cal3: #184f95; }
+@media (prefers-color-scheme: dark) { :root { --cal1: #184f95; --cal2: #2a78d6; --cal3: #86b6ef; } }
+.cal { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-flow: column; grid-auto-columns: 12px;
+  gap: 2px; overflow-x: auto; padding-bottom: 4px; }
+.cal div, .key i { border-radius: 2px; background: var(--cal0); }
+.cal .l1, .key .l1 { background: var(--cal1); } .cal .l2, .key .l2 { background: var(--cal2); }
+.cal .l3, .key .l3 { background: var(--cal3); }
+.key { display: flex; gap: 2px; align-items: center; font-size: 12px; margin-top: 6px; }
+.key i { display: inline-block; width: 12px; height: 12px; }
+.subtabs { background: var(--panel); border-bottom: 1px solid var(--line); padding: 6px 16px; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; }
+.subtabs a { color: var(--muted); text-decoration: none; }
+.subtabs a.on, .subtabs a:hover { color: var(--accent); }
 .mermaid { background: #fff; border-radius: 8px; padding: 10px; overflow-x: auto; }
 </style>
 <script>
-// A button of a study page that calls a model: all buttons wait; then the page
-// goes to next (or reloads), or the .msg beside the button shows the error.
+// A button that posts JSON (a model call, a save): all buttons wait; then the
+// page goes to next (or reloads), or the .msg beside the button shows the error.
 async function post(button, url, body, next) {
   const label = button.textContent;
   const msg = button.parentElement.querySelector(".msg");
   document.querySelectorAll("button.go").forEach(b => b.disabled = true);
-  button.textContent = "The model is working…";
+  button.textContent = "Working…";
   const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
   if (r.ok) return next ? location.assign(next) : location.reload();
   msg.textContent = (await r.json()).detail || `HTTP ${r.status}`;
   document.querySelectorAll("button.go").forEach(b => b.disabled = false);
   button.textContent = label;
+}
+// Uploads the PDFs of a file input, one request each, into the PDF queue: of
+// one paper, or of the paper that each PDF finds (ADR-0031). The .msg beside
+// the input shows one line for each PDF.
+async function uploadPdfs(input, paper) {
+  const msg = input.parentElement.querySelector(".msg");
+  const lines = [];
+  for (const file of input.files) {
+    msg.textContent = lines.concat(`${file.name}: uploading…`).join("\n");
+    const r = await fetch(`/papers/upload?name=${encodeURIComponent(file.name)}${paper ? `&paper=${paper}` : ""}`,
+                          {method: "POST", headers: {"Content-Type": "application/pdf"}, body: file});
+    const reply = await r.json();
+    lines.push(r.ok ? reply.report : `${file.name}: ${reply.detail || `HTTP ${r.status}`}`);
+  }
+  msg.textContent = lines.join("\n") + "\nEach queued PDF is now parsed, chunked, embedded and summarized. Reload the page to see its state.";
+  input.value = "";
 }
 </script>
 {% block head %}{% endblock %}
@@ -102,18 +132,25 @@ async function post(button, url, body, next) {
 <header>
   <b>phdcode</b>
   {% set here = request.url.path %}
-  <a href="/" class="{{ 'on' if here == '/' }}">Overview</a>
-  <a href="/interests" class="{{ 'on' if here.startswith('/interests') }}">Interests</a>
-  <a href="/papers" class="{{ 'on' if here.startswith('/papers') }}">Papers</a>
-  <a href="/digests" class="{{ 'on' if here.startswith('/digests') }}">Digests</a>
-  <a href="/labels" class="{{ 'on' if here.startswith('/labels') }}">Labels</a>
-  <a href="/questions" class="{{ 'on' if here.startswith('/questions') }}">Questions</a>
-  <a href="/paper-of-the-day" class="{{ 'on' if here.startswith('/paper-of-the-day') }}">Paper of the day</a>
-  <a href="/ask" class="{{ 'on' if here.startswith('/ask') }}">Ask</a>
-  <a href="/writing" class="{{ 'on' if here.startswith('/writing') }}">Writing</a>
-  <a href="/bin" class="{{ 'on' if here.startswith('/bin') }}">Bin</a>
-  <a href="/how" class="{{ 'on' if here.startswith('/how') }}">How it works</a>
+  {# The top tabs, and the sub-tabs of a tab (ADR-0031). A tab is on when the path is under one of its pages. #}
+  {% set tabs = [
+    ("Overview", "/", []),
+    ("Papers", "/papers", [("Papers", "/papers"), ("Interests", "/interests"), ("Labels", "/labels"), ("Digests", "/digests"), ("Bin", "/bin")]),
+    ("Ask", "/ask", []),
+    ("Skill development", "/questions", [("Questions", "/questions"), ("Writing", "/writing")]),
+    ("How it works", "/how", []),
+  ] %}
+  {% set ns = namespace(subs=[], on=false) %}
+  {% for name, href, subs in tabs %}
+    {% set ns.on = false %}
+    {% for page in subs|map(attribute=1)|list or [href] %}
+      {% if here == page or here.startswith(page ~ "/") %}{% set ns.on = true %}{% endif %}
+    {% endfor %}
+    {% if ns.on %}{% set ns.subs = subs %}{% endif %}
+    <a href="{{ href }}" class="{{ 'on' if ns.on }}">{{ name }}</a>
+  {% endfor %}
 </header>
+{% if ns.subs %}<nav class="subtabs">{% for name, href in ns.subs %}<a href="{{ href }}" class="{{ 'on' if here == href or here.startswith(href ~ '/') }}">{{ name }}</a>{% endfor %}</nav>{% endif %}
 <main>
 {% block main %}{% endblock %}
 </main>
