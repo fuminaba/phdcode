@@ -69,6 +69,8 @@ phdcode import ~/Downloads/library.bib --zotero-storage ~/zotero-storage
 
 ### PDFs that you downloaded
 
+In the interface, click **Upload PDFs** on the page Papers (several PDFs), or **Upload the PDF** on the page of a paper (one PDF for that paper). Each PDF goes into the queue, and the interface starts `phdcode ingest`, then `phdcode summarize`, in the background (ADR-0031). On the server, the same steps are:
+
 1. Copy the PDFs to the server, to any folder. Keep them there until step 3 has copied them.
 2. Put each PDF into the queue of its paper:
 
@@ -123,7 +125,22 @@ systemctl --user enable --now <repo>/llm_engine/systemd/phdcode-sweep.timer
 
 ## The interface
 
-A web page on the server shows the papers, the PDF queue, the failed PDFs, the chunks with their sections and links, the figures and tables, the digests, the saved searches and the triaged hits. It changes two things: the importance of a paper (three buttons on the paper page, ADR-0019), and the daily questions on the page Questions (ADR-0020): a click makes a question from your library, mostly from the papers you marked crucial; you answer in a paragraph and a model grades it, with a bonus point for each correct citation. "Skip: new question" replaces a question that you do not want. Two lists choose the question model and the grader from `LLM_ROUTING`. Three more lists choose the axis set (field competencies or exam areas), the competency and the question type (explain, compare, critique, design, apply); "Weakest first" and "Least practised" steer you to what you have practised least (ADR-0021). After a grade, the page shows the model answer and the key points of a strong answer. "Answer again" lets you answer the same question later; each attempt stays in the score history of the question, and the points use the latest attempt (ADR-0022). Under each question, "Ask the model" is a chat with the grader model: before you answer, it clarifies the question but does not give the answer; after the grade, it discusses your answer and the model answer (ADR-0023). The page also shows your points, your streak, a calendar of the answers of each day, a radar of the selected axis set, and your answers by question type. A local model starts llama-server, so it waits while the GPU is cleared. Its address is `DASHBOARD_URL` ([Configuration](configuration.md)). It runs as the user unit `llm_engine/systemd/phdcode-dashboard.service`, and it reads `.env` at start: restart it after a change to `.env`.
+A web page on the server, on the Tailscale address only. It has five tabs (ADR-0031):
+
+- **Overview:** your activity (the day streak, the activities of each week and of each day: questions answered, writing tasks, papers marked as read), the paper of the day (ADR-0024), and the library in numbers. What runs and the configuration are in closed sections.
+- **Papers**, with five sub-tabs:
+    - **Papers:** the table of papers, with a filter and sortable columns, and **Upload PDFs**. The page of a paper shows its chunks, figures, tables and triage, and sets its importance (ADR-0019), its notes and its read mark (ADR-0026).
+    - **Interests:** the saved searches. Open one to change its interest, its query or its threshold, or to cancel it; **New saved search** adds one. A changed query runs from the last sweep on.
+    - **Labels:** each judged hit, to label as relevant or not (ADR-0027).
+    - **Digests:** the digest of each sweep, as day cards.
+    - **Bin:** the deleted papers, to restore (ADR-0026).
+- **Ask:** an agent answers a question from the library ([On the page Ask](#on-the-page-ask)).
+- **Skill development**, with two sub-tabs:
+    - **Questions:** daily questions from your library, graded by a model, with a score history and a tutor chat (ADR-0020 to ADR-0023).
+    - **Writing:** a writing task with scores for six criteria, and a revision (ADR-0025).
+- **How it works:** the diagrams of the tool.
+
+A local model starts llama-server, so it waits while the GPU is cleared. The address of the interface is `DASHBOARD_URL` ([Configuration](configuration.md)). It runs as the user unit `llm_engine/systemd/phdcode-dashboard.service`, and it reads `.env` at start: restart it after a change to `.env`.
 
 ## Backup
 

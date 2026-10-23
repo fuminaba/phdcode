@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-22 (after `88a0426`)
+**Updated:** 2026-10-22 (after `6e3a8e7`)
 
 <!--
 CONVENTION -- read before editing.
@@ -35,7 +35,8 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 - **The first timed sweep runs on 2026-10-23 at 06:00 PDT** (`phdcode-sweep.timer`, installed 2026-10-22). Its first step, `phdcode ingest`, parses the 16 PDFs that `phdcode queue` put into the queue on 2026-10-22 (from Fumi's download folder; 15 matched by DOI, 1 by title). Then the sweep of the 14 saved searches, `headscore`, `summarize` and `backup`. Look at the result in `journalctl --user -u phdcode-sweep.service` and on the page Digests.
 - The library: 117 papers, 31 with full text (2,171 chunks) before that ingest.
-- The page Paper of the day (ADR-0024) and the writing coach (ADR-0025) are tested with a fake model only, not yet with a real model.
+- The paper of the day (ADR-0024, now on the overview) and the writing coach (ADR-0025) are tested with a fake model only, not yet with a real model.
+- **The upload of a PDF (ADR-0031) is tested up to the queue only** (`phdcode_test`, the ingest unit replaced by a stub). The first real upload starts `phdcode-ingest`, which also parses the other PDFs in the queue. Check it with `journalctl --user -u phdcode-ingest`.
 
 Not done (Fumi's plans, 2026-10-14): textbooks as sources (for axes such as ML foundations): `embed()` needs batches first, a book has no methods or results summary, and its questions need chapters, not the abstract. A thesis section: the thesis in LaTeX on Overleaf, synced to GitHub; phdcode would read the `.tex` files of a clone (no PDF parse) and chunk them by section. The user's own papers as a separate kind.
 
@@ -79,7 +80,7 @@ Recorded here only where the ADRs do not cover it:
 
 - **`phdcode-llm-proxy.socket`** (systemd user unit, enabled) listens on port 8080 of the Tailscale address and of `127.0.0.1` only (the local drop-in `~/.config/systemd/user/phdcode-llm-proxy.socket.d/override.conf`, 2026-10-22, with `FreeBind=true`). It starts llama-server with Bonsai 2 27B at the first request; llama-server holds 14.4 GB of VRAM and `/tmp/gpu.lock` until 30 minutes after the last request. Check: `systemctl --user is-active phdcode-llm-proxy.socket phdcode-llm.service`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-llm`.
 - **`phdcode-sweep.timer`** (systemd user unit, enabled 2026-10-22): `phdcode-sweep.service` each day at 06:00, `Persistent=true`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-sweep`.
-- **`phdcode-dashboard.service`** (systemd user unit, enabled): the web interface on port 8620 of the Tailscale address only (it writes `papers.importance`, `papers.notes`, `papers.read_at`, `papers.deleted_at`, the tables `questions` and `settings`; it deletes the papers of the bin for good after the bin days, with their folders). It reads `.env` at start: restart it after a change. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-dashboard`.
+- **`phdcode-dashboard.service`** (systemd user unit, enabled): the web interface on port 8620 of the Tailscale address only (it writes `papers.importance`, `papers.notes`, `papers.read_at`, `papers.deleted_at`, the tables `questions`, `settings` and `saved_searches`, and the PDF queue; uploads go to `logs/uploads/`, and it starts the transient unit `phdcode-ingest` (`phdcode ingest`, then `phdcode summarize`); it deletes the papers of the bin for good after the bin days, with their folders). It reads `.env` at start: restart it after a change. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-dashboard`.
 - Postgres (`alira2-postgres-1`) runs in Docker, with the test database `phdcode_test`. Redis (`alira2-redis-1`) still runs, but nothing uses it.
 - The MCP server is registered in Claude Code (`claude mcp add phdcode`) and in dcode (`~/.deepagents/.mcp.json`, user level, outside the repo); each session starts its own `phdcode-mcp`.
 - The repo `fuminaba/phdcode` is public, and the docs are at `https://phdcode.fuminaba.com` (the Cloudflare Worker `phdcode-docs`).

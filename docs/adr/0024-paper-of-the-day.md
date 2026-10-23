@@ -1,6 +1,6 @@
 # ADR-0024: The paper of the day, a brief for the defence
 
-**Status:** Accepted — 2026-10-17
+**Status:** Accepted — 2026-10-17. The page is gone: the brief is on the overview (ADR-0031).
 
 ## Context
 

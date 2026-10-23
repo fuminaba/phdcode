@@ -2,21 +2,21 @@
 {% block title %}Interests · phdcode{% endblock %}
 {% block main %}
 <h1>Interests</h1>
+<p class="muted">Each saved search is a query that the daily sweep runs. Triage judges each new hit against your library (ADR-0018); the threshold decides which hits go into the digest, and the interest orders them. A changed query runs from the last sweep on; the judged hits stay.</p>
 
-<h2>Interest profile</h2>
-<div class="panel">
-  <p>Triage asks the summary model, for each new hit: would the PhD student who keeps your <b>library</b> want to read it? Your library is the papers that you added, and the hits that you marked as relevant; the sweep's own papers do not count (ADR-0018). The saved searches below decide where the sweep looks; their interest statements order the digest.</p>
-  <p class="muted">To change what the sweep finds, add papers to your library, or ask the agent to add or cancel a saved search.</p>
-</div>
+{% macro fields(s) %}
+  <label>Interest<textarea name="interest" style="min-height:60px">{{ s.interest if s }}</textarea></label>
+  <div class="models" style="margin-top:8px">
+    <label style="flex:1 1 360px">Query<textarea name="query" style="min-height:52px">{{ s.query if s }}</textarea></label>
+    <label>Threshold <input name="threshold" type="number" min="0" max="1" step="0.05" value="{{ '%.2f'|format(s.threshold) if s else '0.30' }}" style="width:6em"></label>
+  </div>
+{% endmacro %}
 
-<h2>Saved searches</h2>
-{% for s in searches %}
-<div class="panel" id="s{{ s.id }}">
-  <div><b>Saved search {{ s.id }}</b> · {{ s.source }}
-    {% if s.cancelled_at %}<span class="tag bad">cancelled {{ s.cancelled_at|when }}</span>{% else %}<span class="tag ok">active</span>{% endif %}</div>
-  <p><b>Interest:</b> {{ s.interest }}</p>
-  <div><b>Query:</b> <code>{{ s.query }}</code></div>
-  <div class="muted">Threshold {{ "%.2f"|format(s.threshold) }} · created {{ s.created_at|when }} · last sweep {{ s.last_swept_at|when or "never" }} · {{ s.hits }} hits judged, {{ s.relevant }} at or above the threshold</div>
+{% for s in searches if not s.cancelled_at %}
+<details class="panel search" id="s{{ s.id }}" data-id="{{ s.id }}">
+  <summary><b>{{ s.id }} · {{ s.name }}</b> <span class="muted">· {{ s.source }} · {{ s.hits }} hits judged, {{ s.relevant }} at or above {{ "%.2f"|format(s.threshold) }} · last sweep {{ s.last_swept_at|when or "never" }}</span></summary>
+  {{ fields(s) }}
+  <button class="go save">Save</button> <button class="go alt cancel">Cancel this search</button> <span class="msg bad"></span>
   {% if hits.get(s.id) %}
   <details><summary>The judged hits, highest probability first</summary>
   <div class="scroll"><table>
@@ -28,8 +28,38 @@
   {% endfor %}
   </table></div></details>
   {% endif %}
-</div>
+</details>
 {% else %}
-<div class="panel muted">No saved searches yet. Ask the chat to add one (the tool add_saved_search), or wait for the interest profile.</div>
+<div class="panel muted">No active saved searches.</div>
 {% endfor %}
+
+<details class="panel" id="new"><summary><b>New saved search</b></summary>
+  <label>Source <select name="source">{% for src in sources %}<option>{{ src }}</option>{% endfor %}</select></label>
+  {{ fields(none) }}
+  <button class="go add">Add</button> <span class="msg bad"></span>
+</details>
+
+{% set cancelled = searches|selectattr("cancelled_at")|list %}
+{% if cancelled %}
+<details class="panel"><summary>Cancelled searches ({{ cancelled|length }})</summary>
+{% for s in cancelled %}
+  <p><b>{{ s.id }} · {{ s.name }}</b> <span class="muted">· {{ s.source }} · cancelled {{ s.cancelled_at|when }} · {{ s.hits }} hits judged</span><br><code>{{ s.query }}</code></p>
+{% endfor %}
+</details>
+{% endif %}
+
+<script>
+// Each form sends its fields as JSON; the page reloads, or the .msg shows the error.
+// A link to #s<id> (digests, paper pages) opens that search.
+if (location.hash) document.querySelector(`details${location.hash}`)?.setAttribute("open", "");
+const values = box => Object.fromEntries([...box.querySelectorAll("[name]")].map(f => [f.name, f.value]));
+document.querySelectorAll(".search").forEach(box => {
+  box.querySelector(".save").addEventListener("click", e => post(e.target, `/interests/${box.dataset.id}`, values(box)));
+  box.querySelector(".cancel").addEventListener("click", e => {
+    if (confirm("Cancel this saved search? The sweep stops running it; its judged hits stay.")) post(e.target, `/interests/${box.dataset.id}/cancel`, {});
+  });
+});
+const add = document.getElementById("new");
+add.querySelector(".add").addEventListener("click", e => post(e.target, "/interests", values(add)));
+</script>
 {% endblock %}

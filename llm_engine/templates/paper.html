@@ -85,9 +85,16 @@ addEventListener("beforeunload", e => { if (notesMsg.textContent === "not saved"
   <h2>Figures</h2>
   <div class="gallery">{% for i in images %}<a href="/papers/{{ p.id }}/files/{{ i }}"><img src="/papers/{{ p.id }}/files/{{ i }}" alt="{{ i }}" loading="lazy"></a>{% endfor %}</div>
   {% endif %}
-{% elif queue.pdf_error %}<span class="bad">The PDF failed: {{ queue.pdf_error }}</span><div class="muted">Source: {{ queue.pdf_source }}. Download it yourself and give its path to ingest_pdf.</div>
-{% elif queue.pdf_source %}<span class="warn">The PDF is in the queue: <code>phdcode ingest</code> parses it.</span><div class="muted">Source: {{ queue.pdf_source }}</div>
+{% elif queue.pdf_error %}<span class="bad">The PDF failed: {{ queue.pdf_error }}</span><div class="muted">Source: {{ queue.pdf_source }}. Download it yourself and upload it here.</div>
+{% elif queue.pdf_source %}<span class="warn">The PDF is in the queue: the next ingest parses it.</span><div class="muted">Source: {{ queue.pdf_source }}</div>
 {% else %}<span class="muted">No files: the PDF of this paper is not ingested.</span>{% endif %}
+{% if not p.parse_mode %}
+  <div style="margin-top:8px">
+    <button class="go alt" onclick="this.nextElementSibling.click()">Upload the PDF</button><input type="file" accept=".pdf,application/pdf" hidden onchange="uploadPdfs(this, {{ p.id }})">
+    <span class="muted">It is parsed, chunked, embedded and summarized for this paper.</span>
+    <div class="msg"></div>
+  </div>
+{% endif %}
 </div>
 
 {% if chunks %}

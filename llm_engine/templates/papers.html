@@ -5,7 +5,12 @@
 {% block main %}
 <h1>Papers <span class="muted">({{ papers|length }})</span></h1>
 <input type="search" id="filter" placeholder="Filter by title, author, source, state or importance">
-<div class="muted" style="margin:-4px 0 8px">Click a column heading to sort; click it again to reverse. Deleted papers are in the <a href="/bin">bin</a>.</div>
+<div style="margin-bottom:8px">
+  <button class="go alt" onclick="this.nextElementSibling.click()">Upload PDFs</button><input type="file" accept=".pdf,application/pdf" multiple hidden onchange="uploadPdfs(this)">
+  <span class="muted">Each PDF goes to the paper that its DOI, arXiv ID or title finds, or becomes a new paper; then it is parsed, chunked, embedded and summarized.</span>
+  <div class="msg"></div>
+</div>
+<div class="muted" style="margin:-4px 0 8px">Click a column heading to sort; click it again to reverse. Deleted papers are in the bin.</div>
 <div class="scroll"><table id="papers">
 <tr><th>Id</th><th>Title</th><th>Authors</th><th>Date</th><th>Source</th><th>State</th><th>Importance</th><th>Read</th><th>Chunks</th><th>Added</th><th></th></tr>
 {% for p in papers %}

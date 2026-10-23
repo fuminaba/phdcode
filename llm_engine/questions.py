@@ -320,38 +320,40 @@ async def write_daily_paper(model: Optional[str] = None) -> dict[str, Any]:
         reply["examiner_questions"], model))
 
 
+def days(per_day: Counter, weeks: int = 26, today: Optional[date] = None) -> dict[str, Any]:
+    """From the count of each day: the count of today, the current and the
+    longest streak of days with a count, and the calendar of the last weeks
+    (whole weeks from Monday; the last one holds today)."""
+    today = today or date.today()
+    longest = run = 0
+    for day in sorted(d for d, n in per_day.items() if n):
+        run = run + 1 if per_day[day - timedelta(days=1)] else 1
+        longest = max(longest, run)
+    current, day = 0, today if per_day[today] else today - timedelta(days=1)
+    while per_day[day]:
+        current, day = current + 1, day - timedelta(days=1)
+    start = today - timedelta(days=today.weekday() + 7 * (weeks - 1))
+    calendar = [[(d, per_day[d]) for d in (start + timedelta(days=7 * w + i) for i in range(7)) if d <= today]
+                for w in range(weeks)]
+    return {"today": per_day[today], "current": current, "longest": longest, "calendar": calendar}
+
+
 def stats(rows: list[dict[str, Any]], attempts: list[dict[str, Any]] = (), weeks: int = 26,
           today: Optional[date] = None) -> dict[str, Any]:
     """The statistics of the questions: points and the radars by the latest
     graded attempt of each question (rows); the attempts of each day (local
     date of the answer), with the current and the longest streak of days
     with an attempt, from all attempts (a redo is practice too)."""
-    today = today or date.today()
     graded = [q for q in rows if q["graded_at"]]
-    per_day = Counter(a["answered_at"].astimezone().date() for a in attempts)
-    longest = run = 0
-    for day in sorted(per_day):
-        run = run + 1 if day - timedelta(days=1) in per_day else 1
-        longest = max(longest, run)
-    current, day = 0, today if today in per_day else today - timedelta(days=1)
-    while day in per_day:
-        current, day = current + 1, day - timedelta(days=1)
-    # The calendar: whole weeks from Monday, the last one holds today.
-    start = today - timedelta(days=today.weekday() + 7 * (weeks - 1))
-    calendar = [[(d, per_day[d]) for d in (start + timedelta(days=7 * w + i) for i in range(7)) if d <= today]
-                for w in range(weeks)]
 
     def summary(scores: list[int]) -> tuple[int, Optional[float]]:
         return len(scores), sum(scores) / len(scores) if scores else None
 
     return {
+        **days(Counter(a["answered_at"].astimezone().date() for a in attempts), weeks, today),
         "points": sum(q["score"] + q["bonus"] for q in graded),
         "answered": len(graded),
-        "today": per_day[today],
         "mean": sum(q["score"] for q in graded) / len(graded) if graded else None,
-        "current": current,
-        "longest": longest,
-        "calendar": calendar,
         "axes": {name: {a: summary([q["score"] for q in graded if f"{name}: {a}" in (q["topics"] or [])])
                         for a in axes} for name, axes in AXIS_SETS.items()},
         "types": {k: summary([q["score"] for q in graded if q.get("question_type") == k]) for k in QUESTION_TYPES},
