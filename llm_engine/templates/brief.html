@@ -1,0 +1,14 @@
+{# A brief (ADR-0032): the text of a model, who wrote it and when, and a button that writes it again. #}
+{% macro brief_panel(b, key, empty, title) %}
+<div class="panel brief">
+  {% if title %}<b>{{ title }}</b>{% endif %}
+  {% if b %}<div class="md">{{ b.text|md_cites }}</div>
+  <div class="muted" style="font-size:13px">Written by {{ b.model or "?" }} at {{ b.written_at|when }}. Check a claim in the paper before you use it.</div>
+  {% else %}<p class="muted">{{ empty }}</p>{% endif %}
+  <div class="models" style="margin:8px 0 0">
+    <label>Model <select>{% for m in model_names() %}<option{{ " selected" if m == brief_model }}>{{ m }}</option>{% endfor %}</select></label>
+    <button class="go alt" onclick="post(this, '/briefs/{{ key }}', {model: this.parentElement.querySelector('select').value})">{{ "Write again" if b else "Write" }}</button>
+    <span class="msg bad"></span>
+  </div>
+</div>
+{% endmacro %}

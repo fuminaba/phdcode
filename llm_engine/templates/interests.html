@@ -1,7 +1,10 @@
 {% extends "base.html" %}
+{% from "brief.html" import brief_panel %}
 {% block title %}Interests · phdcode{% endblock %}
 {% block main %}
 <h1>Interests</h1>
+{{ brief_panel(brief, "interests", "No interests brief yet. The daily sweep writes one from your library; or write it now.", "Your interests") }}
+<p class="muted" style="font-size:13px">A model writes this paragraph from the titles of your library and the interest statements below; the words in bold are your keywords of interest. It is the query of the pertinence on the pages Triage and Digests (ADR-0032).</p>
 <p class="muted">Each saved search is a query that the daily sweep runs. Triage judges each new hit against your library (ADR-0018); the threshold decides which hits go into the digest, and the interest orders them. A changed query runs from the last sweep on; the judged hits stay.</p>
 
 {% macro fields(s) %}

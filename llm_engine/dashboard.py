@@ -31,12 +31,12 @@ from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 
-from . import ask, gpu, questions, writing
+from . import ask, briefs, gpu, puzzles, questions, writing
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
 from .memory import close_pool, get_paper, get_pool, pending_papers, queue_local_pdfs
-from .memory.db import HITS_JOIN, add_saved_search, cancel_saved_search, update_saved_search
+from .memory.db import HITS_JOIN, TRIAGE_OF_PAPER, add_saved_search, cancel_saved_search, update_saved_search
 from .memory.document_index import CHUNK_OVERLAP, CHUNK_SIZE, MAP_CHUNK_SIZE
 from .sources import OPENALEX_API_KEY, PUBMED_API_KEY, SOURCES
 from .sweep import DIGEST_DIR, LOOKBACK_DAYS, MAX_HITS, parse_digest
@@ -84,6 +84,10 @@ templates.env.filters["cite_links"] = lambda text: _link_cites(str(escape(text o
 templates.env.filters["md_cites"] = lambda text: _link_cites(_markdown.render(text or ""))
 templates.env.globals["importance_levels"] = IMPORTANCE
 templates.env.globals["zip"] = zip
+# The model menu of a brief (brief.html).
+templates.env.globals["model_names"] = questions.models
+templates.env.globals["brief_model"] = briefs.BRIEF_MODEL
+templates.env.globals["brush_up_attempts"] = questions.BRUSH_UP_ATTEMPTS
 templates.env.globals["source_url"] = lambda source, source_id: (
     SOURCE_URL[source].format(source_id) if source in SOURCE_URL else None)
 
@@ -149,6 +153,7 @@ def _config() -> list[tuple[str, Any]]:
         ("Summary model (SUMMARY_MODEL)", SUMMARY_MODEL or "not set: summaries stay pending"),
         ("Triage model (TRIAGE_MODEL): does the student with this library want the paper?",
          TRIAGE_MODEL or f"{SUMMARY_MODEL} (the summary model)"),
+        ("Brief model (BRIEF_MODEL): the briefs of Interests, Triage and Digests", briefs.BRIEF_MODEL),
         ("Embedding model (CPU, Ollama)", EMBEDDING_MODEL),
         ("Chunk size / overlap (characters)", f"{CHUNK_SIZE} / {CHUNK_OVERLAP}"),
         ("Summary map chunk (characters)", MAP_CHUNK_SIZE),
@@ -165,8 +170,9 @@ async def _fetch(query: str, *args: Any) -> list[dict[str, Any]]:
 
 
 _PAPERS_SQL = (
-    "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, p.pdf_url, "
-    "       p.parse_mode, p.importance, p.read_at, p.created_at, p.pdf_source, p.pdf_error, "
+    f"SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, p.pdf_url, "
+    "       p.parse_mode, p.importance, p.read_at, p.created_at, p.pdf_source, p.pdf_error, p.origin, "
+    f"       {TRIAGE_OF_PAPER} AS triage, "
     "       (p.methods_summary IS NOT NULL AND p.results_summary IS NOT NULL) AS summarized, "
     "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks "
     "FROM papers p WHERE p.deleted_at IS NULL ORDER BY p.id DESC"
@@ -224,14 +230,65 @@ async def _activity(weeks: int = 12) -> dict[str, Any]:
             "this_week": sum(by_week[-1]), "total": len(stamps)}
 
 
+# The habits of the home page, each with the SQL of the time of each event.
+HABITS = {
+    "papers read": "SELECT read_at AS at FROM papers WHERE read_at IS NOT NULL AND deleted_at IS NULL",
+    "literature questions": "SELECT answered_at AS at FROM attempts",
+    "coding exercises": "SELECT a.graded_at AS at FROM puzzle_attempts a JOIN puzzles p ON p.id = a.puzzle_id WHERE p.track = 'coding'",
+    "stats/ML refreshed": "SELECT a.graded_at AS at FROM puzzle_attempts a JOIN puzzles p ON p.id = a.puzzle_id WHERE p.track = 'stats'",
+    "writing practiced": "SELECT graded_at AS at FROM writing_attempts",
+}
+
+
+@app.get("/activity.json")
+async def activity_json() -> dict[str, dict[str, int]]:
+    """The count of each habit on each day, for the home page: {habit: {"YYYY-MM-DD": count}}."""
+    return {name: Counter(str(r["at"].astimezone().date()) for r in await _fetch(sql)) for name, sql in HABITS.items()}
+
+
 @app.get("/papers")
 async def papers(request: Request):
+    return await _papers_page(request, triage=False)
+
+
+@app.get("/triage")
+async def triage_page(request: Request):
+    """The papers that the sweep saved and the user did not keep or delete
+    yet, the most pertinent first, under the triage brief (ADR-0032)."""
+    return await _papers_page(request, triage=True)
+
+
+async def _papers_page(request: Request, triage: bool):
     days = await _bin_days()
     await _empty_bin(days)
-    rows = await _fetch(_PAPERS_SQL)
+    rows = [p for p in await _fetch(_PAPERS_SQL) if (p["origin"] == "sweep") == triage]
     for p in rows:
         p["state"] = _paper_state(p)
-    return _page(request, "papers.html", papers=rows, days=days)
+    brief = None
+    if triage:
+        pertinent = await briefs.scores([p["id"] for p in rows])
+        for p in rows:
+            p["pertinence"] = pertinent.get(p["id"])
+        rows.sort(key=lambda p: -(p["pertinence"] or 0))
+        brief = await briefs.get("triage")
+    return _page(request, "papers.html", papers=rows, days=days, triage=triage, brief=brief)
+
+
+@app.post("/papers/{paper_id}/keep")
+async def keep(paper_id: int):
+    """Moves a paper from triage to the papers: it becomes the user's, so
+    triage reads its title from now on (ADR-0018, ADR-0032)."""
+    await _update_paper(paper_id, "origin = $2", None)
+
+
+@app.post("/briefs/{key}")
+async def write_brief(key: str, request: Request):
+    """{"model"}: writes the brief of this key again (ADR-0032)."""
+    body = await _model_body(request, "model")
+    try:
+        await briefs.write(key, body.get("model"))
+    except Exception as e:  # the model server is stopped, the key is unknown, or no interests brief yet
+        raise HTTPException(503, f"No brief: {type(e).__name__}: {e}")
 
 
 def _paper_dir(paper_id: int) -> Path:
@@ -391,7 +448,8 @@ async def interests(request: Request):
         by_search.setdefault(h["saved_search_id"], []).append(h)
     for s in searches:
         s["name"] = _search_name(s["interest"])
-    return _page(request, "interests.html", searches=searches, hits=by_search, sources=SOURCES)
+    return _page(request, "interests.html", searches=searches, hits=by_search, sources=SOURCES,
+                 brief=await briefs.get("interests"))
 
 
 def _search_name(interest: str) -> str:
@@ -454,7 +512,11 @@ async def digests(request: Request, day: str = ""):
                      "searches": len(searches), "notes": sum(len(s["notes"]) for s in searches)})
     refs = list({h["ref"] for d in days for sweep in d["sweeps"] for s in sweep["searches"] for h in s["hits"]})
     papers = {f"{r['source']}:{r['source_id']}": r for r in await _fetch(
-        "SELECT id, source, source_id, importance FROM papers WHERE source || ':' || source_id = ANY($1)", refs)}
+        "SELECT id, source, source_id, importance, origin FROM papers WHERE source || ':' || source_id = ANY($1)", refs)}
+    # The pertinence ranks the papers of one day, as in the brief of the day.
+    for d in days:
+        d["pertinent"] = await briefs.scores(await briefs.day_paper_ids(str(d["date"])))
+        d["brief"] = await briefs.get(f"digest:{d['date']}")
     return _page(request, "digests.html", days=days, papers=papers, open_day=day or (files[0].name if files else ""),
                  source_names={"arxiv": "arXiv", "pubmed": "PubMed", "openalex": "OpenAlex"})
 
@@ -538,6 +600,7 @@ async def questions_page(request: Request, q: int = 0):
                         current["id"]) if current else []
     return _page(request, "questions.html", current=current, history=[r for r in rows if r is not current],
                  attempts=by_question, titles=titles, stats=stats, today=date.today(), chat=chat,
+                 brush_up=questions.brush_up(attempts),
                  radars={name: _radar([n for n, _ in axes.values()]) for name, axes in stats["axes"].items()},
                  axis_sets=questions.AXIS_SETS, question_types=questions.QUESTION_TYPES,
                  models=questions.models(), question_model=questions.QUESTION_MODEL,
@@ -662,6 +725,69 @@ async def review_writing(prompt_id: int, request: Request):
         raise HTTPException(404, str(e))
     except Exception as e:  # the model server is stopped, or the reply is not valid
         raise HTTPException(503, f"No review: {e}")
+
+
+@app.get("/coding")
+async def coding_page(request: Request, p: int = 0):
+    return await _puzzles_page(request, "coding", p)
+
+
+@app.get("/stats")
+async def stats_page(request: Request, p: int = 0):
+    return await _puzzles_page(request, "stats", p)
+
+
+async def _puzzles_page(request: Request, track: str, p: int):
+    """p: the puzzle to show and answer again; else today's latest of the track (ADR-0033)."""
+    rows = await _fetch("SELECT * FROM puzzles WHERE track = $1 ORDER BY asked_on DESC, id DESC", track)
+    attempts = await _fetch("SELECT a.*, z.topic, z.puzzle_type FROM puzzle_attempts a "
+                            "JOIN puzzles z ON z.id = a.puzzle_id WHERE z.track = $1 ORDER BY a.id", track)
+    current = next((z for z in rows if z["id"] == p), None) if p else (
+        rows[0] if rows and rows[0]["asked_on"] == date.today() else None)
+    if p and current is None:
+        raise HTTPException(404, f"No {track} puzzle has id {p}.")
+    by_puzzle: dict[int, list[dict[str, Any]]] = {}
+    for a in attempts:
+        by_puzzle.setdefault(a["puzzle_id"], []).append(a)
+    return _page(request, "puzzles.html", track=track, spec=puzzles.TRACKS[track], current=current,
+                 history=[z for z in rows if z is not current], attempts=by_puzzle,
+                 stats=puzzles.stats(track, [a[-1] for a in by_puzzle.values()], attempts),
+                 brush_up=questions.brush_up(attempts),
+                 today=date.today(), models=questions.models(), prompt_model=questions.QUESTION_MODEL,
+                 review_model=questions.GRADE_MODEL)
+
+
+@app.post("/puzzles/new")
+async def new_puzzle(request: Request):
+    """{"track", "topic", "type", "model"}: a new puzzle; a missing topic or
+    type is the least practised."""
+    body = await _model_body(request, "model")
+    spec = puzzles.TRACKS.get(body.get("track"))
+    if spec is None:
+        raise HTTPException(422, f"The track must be one of {', '.join(puzzles.TRACKS)}.")
+    for field, key in (("topic", "topics"), ("type", "types")):
+        if body.get(field) is not None and body[field] not in spec[key]:
+            raise HTTPException(422, f"Unknown {field} {body[field]!r}.")
+    try:
+        return {"id": (await puzzles.ask(body["track"], body.get("topic"), body.get("type"), body.get("model")))["id"]}
+    except Exception as e:  # the model server is stopped, the reply is not valid, or its tests fail
+        raise HTTPException(503, f"No puzzle: {e}")
+
+
+@app.post("/puzzles/{puzzle_id}/answer")
+async def answer_puzzle(puzzle_id: int, request: Request):
+    """{"answer", "model"}: runs the tests, scores the answer and saves it as
+    an attempt; the page keeps the answer if this fails."""
+    body = await _model_body(request, "model")
+    answer = (body.get("answer") or "").strip()
+    if not answer:
+        raise HTTPException(422, "The answer is empty.")
+    try:
+        return {"id": (await puzzles.grade(puzzle_id, answer, body.get("model")))["id"]}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # the model server is stopped, or the reply is not valid
+        raise HTTPException(503, f"No score: {e}")
 
 
 async def _ask_calls() -> list[dict[str, Any]]:

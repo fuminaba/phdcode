@@ -1,0 +1,6 @@
+{# The concepts to brush up on (ADR-0033): of one answer, and of the recent answers of a page. #}
+{% macro topics_line(topics) %}{% if topics %}<p><b>Brush up on:</b> {% for t in topics %}<span class="tag">{{ t }}</span> {% endfor %}</p>{% endif %}{% endmacro %}
+{% macro brush_up_panel(rows) %}
+<h2>Brush up on <span class="muted">(concepts that the grader named in your last {{ brush_up_attempts }} answers, the most frequent first)</span></h2>
+<div class="panel">{% for name, count in rows %}<span class="tag">{{ name }}{% if count > 1 %} ×{{ count }}{% endif %}</span> {% else %}<span class="muted">Nothing yet: each graded answer adds the concepts that it showed as weak.</span>{% endfor %}</div>
+{% endmacro %}

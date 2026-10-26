@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Questions · phdcode{% endblock %}
+{% from "brush_up.html" import topics_line, brush_up_panel %}
+{% block title %}Literature · phdcode{% endblock %}
 {% block head %}
 <style>
 .score { font-size: 26px; font-weight: 600; }
@@ -21,7 +22,7 @@
 </style>
 {% endblock %}
 {% block main %}
-<h1>Questions</h1>
+<h1>Literature</h1>
 <div class="cards" style="margin-bottom:14px">
   <div class="card"><div class="n">{{ stats.points }}</div><div class="l">points</div></div>
   <div class="card"><div class="n">{{ stats.answered }}</div><div class="l">questions answered</div></div>
@@ -69,9 +70,10 @@
   <div id="result">
   <p class="score">{{ current.score }}/10{% if current.bonus %} <span class="ok">+{{ current.bonus }}</span>{% endif %}</p>
   {% if attempts.get(current.id, [])|length > 1 %}<p class="muted">Score history: {{ score_history(current) }}</p>{% endif %}
-  <p>{{ current.feedback }}</p>
+  <p class="reading">{{ current.feedback }}</p>
+  {{ topics_line(current.review_topics) }}
   <details><summary>Your answer</summary><p>{{ current.answer }}</p></details>
-  <details open><summary>Model answer</summary><p>{{ current.model_answer|cite_links }}</p>{{ key_points(current) }}</details>
+  <details open><summary>Model answer</summary><p class="reading">{{ current.model_answer|cite_links }}</p>{{ key_points(current) }}</details>
   <div class="muted">Papers of the question: {{ papers(current.paper_ids) }}</div>
   {% if current.cited %}<div class="muted">Your correct citations: {{ papers(current.cited) }}</div>{% endif %}
   <div class="muted">Question by {{ current.question_model or "?" }} · graded by {{ current.grade_model or "?" }}</div>
@@ -93,6 +95,8 @@
   </div>
 {% endif %}
 </div>
+
+{{ brush_up_panel(brush_up) }}
 
 <h2>Answers each day <span class="muted">(last {{ stats.calendar|length }} weeks)</span></h2>
 <div class="panel">
@@ -150,6 +154,7 @@
   <p><b>{{ q.question }}</b></p>
   {% if q.answer %}<p><b>Your answer:</b> {{ q.answer }}</p>{% endif %}
   {% if q.feedback %}<p><b>Feedback:</b> {{ q.feedback }}</p>{% endif %}
+  {{ topics_line(q.review_topics) }}
   <p><b>Model answer:</b> {{ q.model_answer|cite_links }}</p>
   {{ key_points(q) }}
   <div class="muted">Papers: {{ papers(q.paper_ids) }}</div>

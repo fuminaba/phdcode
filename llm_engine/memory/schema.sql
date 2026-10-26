@@ -109,6 +109,10 @@ CREATE TABLE IF NOT EXISTS attempts (
     graded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS attempts_question_idx ON attempts (question_id);
+-- The concepts that the grader says the answer should brush up on (ADR-0033);
+-- questions holds those of the latest attempt, as for its other answer columns.
+ALTER TABLE questions ADD COLUMN IF NOT EXISTS review_topics TEXT[];
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS review_topics TEXT[];
 
 -- The conversation about a daily question with the tutor model (ADR-0023).
 CREATE TABLE IF NOT EXISTS question_chat (
@@ -277,3 +281,47 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     ms INTEGER NOT NULL,
     called_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- The briefs (ADR-0032): the prose that a model writes at the top of a page,
+-- one row for each key: 'interests', 'triage' or 'digest:<date>'. embedding
+-- is the vector of the interests brief, the query of the pertinence.
+CREATE TABLE IF NOT EXISTS briefs (
+    key TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    model TEXT,
+    embedding vector({embedding_dim}),
+    written_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- The puzzles (ADR-0033): daily practice of coding (track 'coding') and of
+-- statistics and machine learning ('stats'). A coding puzzle has a language,
+-- starter code, tests and a reference solution that passes them; a stats
+-- puzzle has a model answer as its reference.
+CREATE TABLE IF NOT EXISTS puzzles (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    asked_on DATE NOT NULL,
+    track TEXT NOT NULL CHECK (track IN ('coding', 'stats')),
+    topic TEXT NOT NULL,
+    puzzle_type TEXT NOT NULL,
+    language TEXT,
+    prompt TEXT NOT NULL,
+    starter TEXT,
+    tests TEXT,
+    reference TEXT NOT NULL,
+    key_points TEXT[] NOT NULL DEFAULT '{{}}',
+    model TEXT
+);
+-- Each answer to a puzzle: tests holds the result of each test of a coding
+-- puzzle ([{{"name", "ok", "error"}}]); score is 0 to 10.
+CREATE TABLE IF NOT EXISTS puzzle_attempts (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    puzzle_id BIGINT NOT NULL REFERENCES puzzles(id) ON DELETE CASCADE,
+    answer TEXT NOT NULL,
+    tests JSONB,
+    score INT NOT NULL CHECK (score BETWEEN 0 AND 10),
+    feedback TEXT NOT NULL,
+    review_topics TEXT[],
+    model TEXT,
+    graded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS puzzle_attempts_puzzle_idx ON puzzle_attempts (puzzle_id);

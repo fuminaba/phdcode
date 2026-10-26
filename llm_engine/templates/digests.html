@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "brief.html" import brief_panel %}
 {% block title %}Digests · phdcode{% endblock %}
 {% block head %}
 <style>
@@ -34,6 +35,7 @@ details.day[open] > summary { margin-bottom: 8px; }
     <span class="muted">from {{ d.hits }} hits in {{ d.searches }} saved searches</span>
     {% if d.notes %}<span class="tag warn">{{ d.notes }} {{ "note" if d.notes == 1 else "notes" }}</span>{% endif %}
   </summary>
+  {{ brief_panel(d.brief, "digest:" ~ d.date, "No summary of findings for this day yet.", "Summary of findings") }}
   {% for sweep in d.sweeps %}
   <div class="muted" style="font-size:13px">Swept at {{ sweep.time[11:] }}{% for n in sweep.notes %} · {{ n }}{% endfor %}</div>
   {% for s in sweep.searches if s.hits or s.notes %}
@@ -53,8 +55,9 @@ details.day[open] > summary { margin-bottom: 8px; }
     {% for h in s.hits %}{% set saved = papers.get(h.ref) %}
       <li>
         <span>{% if saved %}<a href="/papers/{{ saved.id }}">{{ h.title }}</a>{% else %}<a href="{{ h.url }}">{{ h.title }}</a>{% endif %}
-          {% if saved and saved.importance %}<span class="tag imp imp-{{ saved.importance }} on">{{ saved.importance }}</span>{% endif %}</span>
-        <span class="side"><span class="tag" title="Triage: the probability that you want to read it">{{ "%.0f"|format(100 * h.p) }}%</span><br>
+          {% if saved and saved.importance %}<span class="tag imp imp-{{ saved.importance }} on">{{ saved.importance }}</span>{% endif %}
+          {% if saved and saved.origin == "sweep" %}<a href="/triage" class="tag">in triage</a>{% endif %}</span>
+        <span class="side">{% set pert = d.pertinent.get(saved.id) if saved %}{% if pert is not none %}<span class="tag" title="Pertinence: the hybrid score against your interests brief, among the papers of this day">pertinence {{ "%.2f"|format(pert) }}</span> {% endif %}<span class="tag" title="Triage: the probability that you want to read it">{{ "%.0f"|format(100 * h.p) }}%</span><br>
           <a href="{{ h.url }}" class="muted">{{ source_names.get(h.ref.split(":")[0], "source") }} ↗</a></span>
         <span class="meta">{{ h.authors }}{{ " · " ~ h.date if h.date }}</span>
       </li>

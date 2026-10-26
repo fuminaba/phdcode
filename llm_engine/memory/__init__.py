@@ -15,6 +15,7 @@ from .db import (
     list_saved_searches,
     mark_swept,
     pending_papers,
+    pertinence,
     queue_pdf,
     queued_pdfs,
     record_head_probabilities,

@@ -25,6 +25,7 @@ phdcode reads its settings from `.env` at the root of the repository. A variable
 | `QUESTION_MODEL` | `SUMMARY_MODEL` | The default model that writes the daily questions and their model answers (ADR-0020); the page Questions can choose another route of `LLM_ROUTING`, local or hosted. |
 | `GRADE_MODEL` | `QUESTION_MODEL` | The default model that grades the answers; the page can choose another. |
 | `SYSONE_DIR`, `SYSONE_PYTHON` | none | The absolute paths of the repository of the System One head and of the Python that runs it (ADR-0028). With none, `phdcode headscore` scores nothing. |
+| `BRIEF_MODEL` | `claude-haiku-5-5` | The LLM that writes the briefs (ADR-0032): the interests paragraph, the triage brief and the summary of findings of each day of the digest. A route of `LLM_ROUTING`; the menu of each brief can choose another for one brief. |
 | `TRIAGE_MODEL` | `SUMMARY_MODEL` | The LLM that judges each hit of the sweep: does the student with this library want it? If its server cannot answer (the GPU is cleared for training), the hits wait for the next sweep. |
 
 ## Chunks

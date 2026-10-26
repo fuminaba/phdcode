@@ -1,6 +1,6 @@
 # ADR-0031: Five tabs in the interface; uploads and saved searches change in it
 
-**Status:** Accepted — 2026-10-22
+**Status:** Accepted — 2026-10-22. Item 1 amended by [ADR-0033](0033-coding-and-stats-puzzles.md) (the sub-tabs of Skill development).
 
 ## Context
 
