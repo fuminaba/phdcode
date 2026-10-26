@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{# One template for the pages Coding and Stats & ML (ADR-0033). #}
+{% from "brush_up.html" import topics_line, brush_up_panel %}
+{% block title %}{{ spec.name }} · phdcode{% endblock %}
+{% block head %}
+<style>
+.score { font-size: 26px; font-weight: 600; }
+.bars td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+textarea.code { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; min-height: 280px; tab-size: 4; }
+.tests { list-style: none; padding: 0; margin: 6px 0; font-size: 14px; }
+.tests code { white-space: pre-wrap; }
+</style>
+{% endblock %}
+{% block main %}
+{% set coding = track == "coding" %}
+<h1>{{ spec.name }}</h1>
+<div class="cards" style="margin-bottom:14px">
+  <div class="card"><div class="n">{{ stats.answered }}</div><div class="l">puzzles answered</div></div>
+  <div class="card"><div class="n">{{ "%.1f"|format(stats.mean) if stats.mean is not none else "–" }}</div><div class="l">mean score (of 10), latest answers</div></div>
+  {% if coding %}<div class="card"><div class="n">{{ "%.0f%%"|format(100 * stats.passed) if stats.passed is not none else "–" }}</div><div class="l">tests passed, latest answers</div></div>{% endif %}
+  <div class="card"><div class="n">{{ stats.current }}</div><div class="l">day streak (longest {{ stats.longest }})</div></div>
+</div>
+
+{% macro attempt(a) %}
+  <p class="score">{{ a.score }}/10</p>
+  {% if a.tests %}<p><b>Tests: {{ a.tests|selectattr("ok")|list|length }} of {{ a.tests|length }} passed</b></p>
+  <ul class="tests">{% for t in a.tests %}<li><span class="{{ 'ok' if t.ok else 'bad' }}">{{ "✓" if t.ok else "✗" }}</span> {{ t.name }}{% if not t.ok %}: <code>{{ t.error }}</code>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  <div class="md">{{ a.feedback|md_cites }}</div>
+  {{ topics_line(a.review_topics) }}
+  <details><summary>Your answer</summary><pre>{{ a.answer }}</pre></details>
+  <div class="muted">Scored by {{ a.model or "?" }} · {{ a.graded_at|when }}</div>
+{% endmacro %}
+{% macro reveal(z) %}
+  {% if z.tests %}<details><summary>The tests</summary><pre>{{ z.tests }}</pre></details>{% endif %}
+  <details><summary>The reference {{ "solution" if z.tests else "answer" }}</summary>{% if z.tests %}<pre>{{ z.reference }}</pre>{% else %}<div class="md">{{ z.reference|md_cites }}</div>{% endif %}
+    <p><b>Key points:</b></p><ul>{% for k in z.key_points %}<li>{{ k }}</li>{% endfor %}</ul></details>
+{% endmacro %}
+
+<h2>Puzzle</h2>
+<div class="panel">
+  <div class="models">
+    <label>Puzzle model <select id="question-model">{% for m in models %}<option{{ " selected" if m == prompt_model }}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Scorer <select id="grade-model">{% for m in models %}<option{{ " selected" if m == review_model }}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Topic <select id="topic"><option value="">Least practised</option>{% for k, d in spec.topics.items() %}<option value="{{ k }}" title="{{ d }}">{{ k }}</option>{% endfor %}</select></label>
+    <label>Type <select id="type"><option value="">Least practised</option>{% for k, d in spec.types.items() %}<option value="{{ k }}" title="{{ d }}">{{ k }}</option>{% endfor %}</select></label>
+  </div>
+{% if not current %}
+  <p>No puzzle yet today. {{ "The model writes a coding puzzle with tests, and checks that its own solution passes them. Your code runs against the same tests, then a model scores it." if coding else "The model writes a puzzle in statistics or machine learning. You answer in a few paragraphs, then a model scores the answer against its key points." }}</p>
+  <button class="go new">New puzzle</button> <span class="msg bad"></span>
+{% else %}
+  {% set tries = attempts.get(current.id, []) %}
+  {% if current.asked_on != today %}<p class="muted">A puzzle of {{ current.asked_on }}. <a href="/{{ track }}">Back to today</a></p>{% endif %}
+  <div><span class="tag ok" title="{{ spec.topics.get(current.topic, '') }}">{{ current.topic }}</span> <span class="tag" title="{{ spec.types.get(current.puzzle_type, '') }}">{{ current.puzzle_type }}</span>{% if current.language %} <span class="tag">{{ current.language }}</span>{% endif %}</div>
+  <div class="md">{{ current.prompt|md_cites }}</div>
+  {% if tries %}
+  <div id="result">
+    {% if tries|length > 1 %}<p class="muted">Score history: {% for a in tries %}{{ a.score }}{{ " → " if not loop.last }}{% endfor %}</p>{% endif %}
+    {{ attempt(tries[-1]) }}
+    {{ reveal(current) }}
+    <p><button class="go" id="redo">Answer again</button> <button class="go alt new">New puzzle</button> <span class="msg bad"></span></p>
+  </div>
+  {% endif %}
+  <div id="form"{{ " hidden" if tries }}>
+    <textarea id="answer" class="{{ 'code' if coding }}" spellcheck="{{ 'false' if coding else 'true' }}" aria-label="Your answer">{{ tries[-1].answer if tries else (current.starter or "") }}</textarea>
+    {% if coding %}<p class="muted" style="font-size:13px">Your code is solution.py. The tests import from it; the standard library, numpy, pandas and scipy are available.</p>{% endif %}
+    <p><button class="go" id="submit" data-id="{{ current.id }}">{{ "Run the tests and score" if coding else "Score" }}</button>
+       {% if tries %}<button class="go alt" id="cancel">Cancel</button>{% else %}<button class="go alt new">Skip: new puzzle</button>{% endif %}
+       <span class="msg bad"></span></p>
+  </div>
+{% endif %}
+</div>
+
+{{ brush_up_panel(brush_up) }}
+
+{% for title, rows, specs in (("Topics", stats.topics, spec.topics), ("Types", stats.types, spec.types)) %}
+<h2>{{ title }} <span class="muted">(latest answer of each puzzle)</span></h2>
+<div class="panel"><table class="bars">
+  <tr><th>{{ title[:-1] }}</th><th>Answered</th><th>Mean score</th></tr>
+  {% for k, (n, mean) in rows.items() %}<tr><td title="{{ specs[k] }}">{{ k }}</td><td class="n">{{ n }}</td><td class="n">{{ "%.1f"|format(mean) if mean is not none else "–" }}</td></tr>{% endfor %}
+</table></div>
+{% endfor %}
+
+{% if history %}
+<h2>Earlier puzzles</h2>
+{% for z in history %}{% set tries = attempts.get(z.id, []) %}
+<details class="panel"><summary>{{ z.asked_on }} · {{ z.topic }} · {{ z.puzzle_type }} · {% if tries %}<b>{{ tries[-1].score }}/10</b>{% else %}<span class="muted">skipped</span>{% endif %}</summary>
+  <div class="md">{{ z.prompt|md_cites }}</div>
+  {% if tries %}{{ attempt(tries[-1]) }}{{ reveal(z) }}{% endif %}
+  <p><a href="/{{ track }}?p={{ z.id }}">{{ "Answer again" if tries else "Answer" }}</a></p>
+</details>
+{% endfor %}
+{% endif %}
+
+<script>
+// The chosen models stay for the next visit, in this browser only (shared with Literature and Writing); topic and type per track.
+for (const [id, key] of [["question-model", "question-model"], ["grade-model", "grade-model"], ["topic", "{{ track }}-topic"], ["type", "{{ track }}-type"]]) {
+  const select = document.getElementById(id);
+  try {
+    const saved = localStorage.getItem(key);
+    if ([...select.options].some(o => o.value === saved)) select.value = saved;
+    select.addEventListener("change", () => { try { localStorage.setItem(key, select.value); } catch {} });
+  } catch {}
+}
+const value = id => document.getElementById(id).value || null;
+document.querySelectorAll("button.new").forEach(b => b.addEventListener("click", e =>
+  post(e.target, "/puzzles/new", {track: "{{ track }}", topic: value("topic"), type: value("type"), model: value("question-model")}, "/{{ track }}")));
+document.getElementById("submit")?.addEventListener("click", e =>
+  post(e.target, `/puzzles/${e.target.dataset.id}/answer`, {answer: document.getElementById("answer").value, model: value("grade-model")}));
+document.getElementById("redo")?.addEventListener("click", () => {
+  document.getElementById("result").hidden = true;
+  document.getElementById("form").hidden = false;
+});
+document.getElementById("cancel")?.addEventListener("click", () => {
+  document.getElementById("result").hidden = false;
+  document.getElementById("form").hidden = true;
+});
+</script>
+{% endblock %}

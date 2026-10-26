@@ -43,6 +43,8 @@ superseded most of them. Read 0006 and 0014 to 0028 for the current design.
 | [0029](0029-bm25-keyword-search.md) | BM25 ranks the keyword side of the hybrid search | Accepted |
 | [0030](0030-ask-page.md) | The page Ask: an agent answers in the interface, with the local read-only tools only | Accepted |
 | [0031](0031-interface-tabs-uploads-and-saved-searches.md) | Five tabs in the interface; uploads and saved searches change in it | Accepted |
+| [0032](0032-triage-page-briefs-and-pertinence.md) | The page Triage, the briefs of a model, and the pertinence | Accepted |
+| [0033](0033-coding-and-stats-puzzles.md) | Daily puzzles in coding and in statistics and machine learning | Accepted |
 
 An ADR is valid while its premises are true. To re-open one, name the premise
 that changed, and supersede it in a new ADR. Edit only the status line of the

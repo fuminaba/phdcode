@@ -16,6 +16,10 @@ sweep looks back far enough. The interest statement of a saved search only
 orders its relevant hits in the digest. The
 window of some days also catches a paper that a source indexes late.
 
+A saved paper waits in triage (origin 'sweep') until the user keeps it or
+deletes it. After the digest, the sweep writes the briefs (briefs.py,
+ADR-0032).
+
 Run it with `phdcode sweep`. It logs to stderr (the systemd journal).
 """
 import asyncio
@@ -168,14 +172,18 @@ async def sweep() -> Path:
             lines += ["No saved searches.", ""]
         for saved in saved_searches:
             lines += await sweep_one(saved)
+
+        DIGEST_DIR.mkdir(parents=True, exist_ok=True)
+        path = DIGEST_DIR / f"{now:%Y-%m-%d}.md"
+        with path.open("a") as f:
+            f.write("\n".join(lines) + "\n")
+        log.info("digest: %s", path)
+        # The briefs read the digest file, so briefs imports this module.
+        from . import briefs
+        for failure in await briefs.write_after_sweep(now.date()):
+            log.warning(failure)
     finally:
         await close_pool()
-
-    DIGEST_DIR.mkdir(parents=True, exist_ok=True)
-    path = DIGEST_DIR / f"{now:%Y-%m-%d}.md"
-    with path.open("a") as f:
-        f.write("\n".join(lines) + "\n")
-    log.info("digest: %s", path)
     return path
 
 

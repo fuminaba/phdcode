@@ -107,6 +107,11 @@ it is about, a summary, the key points and the examiner questions
 with the facts in it; an *answer* to it gets a score for each *criterion*
 and can be *revised* (ADR-0025).
 
+**Puzzle** — a daily practice task of one track: *coding* (code that runs
+against prepared tests) or *stats* (statistics and machine learning, a written
+answer), of one topic and one type of the track (ADR-0033). The page of the
+daily question is named *Literature* since then; *Questions* is its old name.
+
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
 
@@ -127,6 +132,20 @@ replies with the probability only. *Not* a generated summary.
 **Digest** — the dated note of the sweeps of one day: for each saved search,
 the relevant hits, each with its triage probability, and the hits that wait
 for triage.
+
+**In triage** — the state of a paper that the sweep saved and the user did
+not keep or delete yet (`origin` is `'sweep'`). The page Triage lists these
+papers; **keep** moves one to the library (ADR-0032). *Not* the triage
+decision of a hit.
+
+**Brief** — the prose that a model writes about a set of papers at the top of
+a page: the interests brief, the triage brief, or the summary of findings of
+one day of the digest (ADR-0032). The paper of the day is a brief of one
+paper (ADR-0024).
+
+**Pertinence** — the hybrid score of a paper against the interests brief,
+ranked among one set of papers, 0 to 1 (ADR-0032). *Not* the triage
+probability.
 
 **Drain** — the timer pass after the sweep that makes the pending summaries
 (`phdcode summarize`). CLI only, never a tool. The upgrade of *text* papers to

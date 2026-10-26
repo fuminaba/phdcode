@@ -1,9 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Papers · phdcode{% endblock %}
-{# The table has 11 columns: it uses the full width of the window. #}
+{% from "brief.html" import brief_panel %}
+{# One template for two pages: Papers, and Triage (triage true): the papers that the sweep saved and you did not keep or delete yet (ADR-0032). #}
+{% set name = "Triage" if triage else "Papers" %}
+{% block title %}{{ name }} · phdcode{% endblock %}
+{# The table has 11 to 13 columns: it uses the full width of the window. #}
 {% block head %}<style>main { max-width: none; }</style>{% endblock %}
 {% block main %}
-<h1>Papers <span class="muted">({{ papers|length }})</span></h1>
+<h1>{{ name }} <span class="muted">({{ papers|length }})</span></h1>
+{% if triage %}
+<p class="muted">The daily sweep puts each relevant paper here first. <b>Keep</b> moves a paper to Papers and makes it part of your library, which triage reads; <b>Delete</b> moves it to the bin. Pertinence is the hybrid score of the paper against your interests brief (page Interests), among the papers on this page.</p>
+{{ brief_panel(brief, "triage", "No triage brief yet. The daily sweep writes one; or write it now.", "Read these first") }}
+{% endif %}
 <input type="search" id="filter" placeholder="Filter by title, author, source, state or importance">
 <div style="margin-bottom:8px">
   <button class="go alt" onclick="this.nextElementSibling.click()">Upload PDFs</button><input type="file" accept=".pdf,application/pdf" multiple hidden onchange="uploadPdfs(this)">
@@ -12,7 +19,7 @@
 </div>
 <div class="muted" style="margin:-4px 0 8px">Click a column heading to sort; click it again to reverse. Deleted papers are in the bin.</div>
 <div class="scroll"><table id="papers">
-<tr><th>Id</th><th>Title</th><th>Authors</th><th>Date</th><th>Source</th><th>State</th><th>Importance</th><th>Read</th><th>Chunks</th><th>Added</th><th></th></tr>
+<tr><th>Id</th><th>Title</th><th>Authors</th><th>Date</th><th>Source</th><th>State</th><th>Importance</th><th>Read</th><th>Chunks</th><th>Added</th>{% if triage %}<th>Pertinence</th><th>Triage</th>{% endif %}<th></th></tr>
 {% for p in papers %}
 <tr data-authors="{{ p.authors|join(' ') }}">
   <td>{{ p.id }}</td>
@@ -25,10 +32,14 @@
   <td data-key="{{ 1 if p.read_at else 0 }}">{% if p.read_at %}<span class="tag ok" title="{{ p.read_at|when }}">read</span>{% endif %}</td>
   <td>{{ p.chunks }}</td>
   <td>{{ p.created_at|when }}</td>
-  <td><button type="button" class="tag delete" value="{{ p.id }}" title="Move to the bin">Delete</button></td>
+  {% if triage %}
+  <td data-key="{{ p.pertinence or 0 }}">{{ "%.2f"|format(p.pertinence) if p.pertinence is not none }}</td>
+  <td data-key="{{ p.triage or 0 }}">{{ "%.2f"|format(p.triage) if p.triage is not none }}</td>
+  {% endif %}
+  <td style="white-space:nowrap">{% if triage %}<button type="button" class="tag keep" value="{{ p.id }}" title="Move to Papers">Keep</button> {% endif %}<button type="button" class="tag delete" value="{{ p.id }}" title="Move to the bin">Delete</button></td>
 </tr>
 {% else %}
-<tr><td colspan="11" class="muted">No papers yet.</td></tr>
+<tr><td colspan="13" class="muted">{{ "No papers wait in triage." if triage else "No papers yet." }}</td></tr>
 {% endfor %}
 </table></div>
 <script>
@@ -38,6 +49,11 @@ document.querySelectorAll("button.delete").forEach(b => b.addEventListener("clic
   if (!confirm(`Move "${title}" to the bin?\n\nYou can restore it from the bin for {{ days }} days. After that, it is deleted for good.`)) return;
   const r = await fetch(`/papers/${b.value}/bin`, {method: "POST"});
   if (r.ok) b.closest("tr").remove(); else alert(`Not deleted: HTTP ${r.status}`);
+}));
+// Keep moves the paper to Papers at once: no question, it is easy to delete there.
+document.querySelectorAll("button.keep").forEach(b => b.addEventListener("click", async () => {
+  const r = await fetch(`/papers/${b.value}/keep`, {method: "POST"});
+  if (r.ok) b.closest("tr").remove(); else alert(`Not kept: HTTP ${r.status}`);
 }));
 document.getElementById("filter").addEventListener("input", e => {
   const q = e.target.value.toLowerCase();

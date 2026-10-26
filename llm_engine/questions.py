@@ -120,7 +120,16 @@ GRADE_SCHEMA = {
     "score": (int, ...),
     "cited_papers": (list[int], ...),
     "feedback": (str, ...),
+    "review_topics": (list[str], []),
 }
+# The concepts to brush up on (ADR-0033): at most MAX_REVIEW_TOPICS for each
+# answer; the panel counts those of the last BRUSH_UP_ATTEMPTS attempts and
+# shows the BRUSH_UP_SHOWN most frequent; the grader sees the names of the
+# last KNOWN_TOPICS_ATTEMPTS attempts, to reuse them.
+MAX_REVIEW_TOPICS = 3
+BRUSH_UP_ATTEMPTS = 30
+BRUSH_UP_SHOWN = 8
+KNOWN_TOPICS_ATTEMPTS = 100
 
 DAILY_PAPER_SCHEMA = {
     "about": (str, ...),
@@ -235,23 +244,25 @@ async def grade(question_id: int, answer: Optional[str] = None, model: Optional[
             raise LookupError(f"Question {question_id} does not exist or has no answer.")
         papers = await conn.fetch(f"SELECT {_PAPER_FIELDS} FROM papers WHERE id = ANY($1)", q["paper_ids"])
         library = await conn.fetch(f"SELECT id, title, authors, published_date FROM papers WHERE {_STUDY_PAPERS} ORDER BY id")
+        known = await known_topics(conn, "SELECT review_topics FROM attempts ORDER BY id DESC LIMIT $1")
     titles = "\n".join(f"P{r['id']}: {r['title']} ({(r['authors'] or ['?'])[0]} {(r['published_date'] or '')[:4]})"
                        for r in library)
     prompt = grade_prompt(q["question"], q["model_answer"], q["key_points"] or [],
-                          "\n\n".join(_paper_text(dict(p)) for p in papers), titles, q["answer"])
+                          "\n\n".join(_paper_text(dict(p)) for p in papers), titles, q["answer"], known)
     reply = await asyncio.to_thread(generate, prompt, model, schema=GRADE_SCHEMA)
     known = {r["id"] for r in library}
     cited = sorted(set(reply["cited_papers"]) & known)
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
             "UPDATE questions SET score = $2, bonus = $3, cited = $4, feedback = $5, grade_model = $6, "
-            "graded_at = now() WHERE id = $1 RETURNING *",
+            "review_topics = $7, graded_at = now() WHERE id = $1 RETURNING *",
             question_id, max(0, min(10, reply["score"])), min(MAX_BONUS, len(cited)), cited, reply["feedback"],
-            model)
+            model, clean_topics(reply["review_topics"]))
         await conn.execute(
             "INSERT INTO attempts (question_id, answer, answered_at, score, bonus, cited, feedback, grade_model, "
-            "graded_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", *[row[k] for k in (
-                "id", "answer", "answered_at", "score", "bonus", "cited", "feedback", "grade_model", "graded_at")])
+            "graded_at, review_topics) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)", *[row[k] for k in (
+                "id", "answer", "answered_at", "score", "bonus", "cited", "feedback", "grade_model", "graded_at",
+                "review_topics")])
         return dict(row)
 
 
@@ -318,6 +329,40 @@ async def write_daily_paper(model: Optional[str] = None) -> dict[str, Any]:
         "summary = $4, key_points = $5, examiner_questions = $6, model = $7, created_at = now() RETURNING *",
         date.today(), paper["id"], reply["about"], reply["summary"], reply["key_points"],
         reply["examiner_questions"], model))
+
+
+def clean_topics(topics: list[str]) -> list[str]:
+    """At most MAX_REVIEW_TOPICS names, each on one line and without a final
+    full stop, the first of each name in any case."""
+    seen, names = set(), []
+    for t in topics:
+        t = " ".join(str(t).split())[:80].rstrip(".")
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            names.append(t)
+    return names[:MAX_REVIEW_TOPICS]
+
+
+async def known_topics(conn, query: str, *args: Any) -> list[str]:
+    """The distinct review topics of the rows of query (one column,
+    review_topics; $1 is KNOWN_TOPICS_ATTEMPTS), newest first."""
+    rows = await conn.fetch(query, KNOWN_TOPICS_ATTEMPTS, *args)
+    return list(dict.fromkeys(t for r in rows for t in r["review_topics"] or []))
+
+
+def brush_up(attempts: list[dict[str, Any]]) -> list[tuple[str, int]]:
+    """The review topics of the last BRUSH_UP_ATTEMPTS attempts (oldest
+    first), with their count: the most frequent first, then the most recent.
+    A name counts in any case and shows in its latest spelling."""
+    # ponytail: names match exactly (in any case); the grader reuses the known
+    # names, so near-duplicates are rare. Merge by embedding if they are not.
+    count: Counter = Counter()
+    name, last = {}, {}
+    for i, a in enumerate(attempts[-BRUSH_UP_ATTEMPTS:]):
+        for t in a.get("review_topics") or []:
+            count[t.lower()] += 1
+            name[t.lower()], last[t.lower()] = t, i
+    return [(name[k], count[k]) for k in sorted(count, key=lambda k: (-count[k], -last[k]))][:BRUSH_UP_SHOWN]
 
 
 def days(per_day: Counter, weeks: int = 26, today: Optional[date] = None) -> dict[str, Any]:
@@ -404,4 +449,10 @@ if __name__ == "__main__":
     assert set(picks) == {2, 4} and picks.count(4) > picks.count(2), picks.count(4)
     # All featured: the least recent.
     assert choose_daily_paper([{**rows[0], "last": d}, {**rows[2], "last": date(2026, 9, 1)}]) == 3
+    # The concepts to brush up on: clean names, then the most frequent and the most recent first.
+    assert clean_topics([" Bayes'  rule. ", "bayes' rule", "", "A", "B", "C"]) == ["Bayes' rule", "A", "B"]
+    tried = [{"review_topics": ["Calibration"]}, {"review_topics": None}, {"review_topics": ["MIL pooling", "calibration"]},
+             {"review_topics": ["Power analysis"]}]
+    assert brush_up(tried) == [("calibration", 2), ("Power analysis", 1), ("MIL pooling", 1)], brush_up(tried)
+    assert brush_up([]) == []
     print("ok")

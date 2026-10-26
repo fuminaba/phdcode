@@ -36,7 +36,7 @@ h2 { font-size: 17px; margin: 26px 0 10px; }
 /* A long table scrolls in a box that fits the window, so that its horizontal
    scroll bar is always in view; its headings stay at the top of the box. */
 .scroll { overflow: auto; max-height: 75vh; }
-.scroll th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.scroll th { position: sticky; top: 0; background: var(--tint); z-index: 1; }
 /* Thin scroll bars in the colours of the theme: the standard properties for
    Firefox and Chrome, the ::-webkit-scrollbar rules for Safari. */
 .scroll { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -80,7 +80,7 @@ button.go:disabled { opacity: .6; cursor: wait; }
 .models { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 10px; font-size: 14px; }
 [hidden] { display: none !important; }
 .msg { white-space: pre-line; }
-/* The calendar of activity: the overview and the page Questions. */
+/* The calendar of activity: the overview and the page Literature. */
 :root { --cal0: var(--code); --cal1: #86b6ef; --cal2: #3987e5; --cal3: #184f95; }
 @media (prefers-color-scheme: dark) { :root { --cal1: #184f95; --cal2: #2a78d6; --cal3: #86b6ef; } }
 .cal { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-flow: column; grid-auto-columns: 12px;
@@ -93,6 +93,19 @@ button.go:disabled { opacity: .6; cursor: wait; }
 .subtabs { background: var(--panel); border-bottom: 1px solid var(--line); padding: 6px 16px; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; }
 .subtabs a { color: var(--muted); text-decoration: none; }
 .subtabs a.on, .subtabs a:hover { color: var(--accent); }
+/* Pastel blue: a tint behind long text (model prose, paper text, feedback), so
+   that it is easy to find and to follow; headings and bold words in a deeper
+   blue. The text keeps its own colour on the tint, for contrast. */
+:root { --tint: #edf4fc; --tint-line: #a8c8ee; --heading: #24507e; }
+@media (prefers-color-scheme: dark) { :root { --tint: #1a2431; --tint-line: #3d5a80; --heading: #a8c7fa; } }
+h1, h2 { color: var(--heading); }
+h2 { border-bottom: 1px solid var(--tint-line); padding-bottom: 4px; }
+th { background: var(--tint); }
+.md, .prose, .reading { background: var(--tint); border-left: 3px solid var(--tint-line); border-radius: 6px;
+  padding: 10px 14px; line-height: 1.65; }
+.md p, .md li, .prose, .reading { max-width: 85ch; }
+.md strong, .reading strong, .prose strong { color: var(--heading); }
+.panel .md { margin: 8px 0; }
 .mermaid { background: #fff; border-radius: 8px; padding: 10px; overflow-x: auto; }
 </style>
 <script>
@@ -135,9 +148,9 @@ async function uploadPdfs(input, paper) {
   {# The top tabs, and the sub-tabs of a tab (ADR-0031). A tab is on when the path is under one of its pages. #}
   {% set tabs = [
     ("Overview", "/", []),
-    ("Papers", "/papers", [("Papers", "/papers"), ("Interests", "/interests"), ("Labels", "/labels"), ("Digests", "/digests"), ("Bin", "/bin")]),
+    ("Papers", "/papers", [("Triage", "/triage"), ("Papers", "/papers"), ("Interests", "/interests"), ("Labels", "/labels"), ("Digests", "/digests"), ("Bin", "/bin")]),
     ("Ask", "/ask", []),
-    ("Skill development", "/questions", [("Questions", "/questions"), ("Writing", "/writing")]),
+    ("Skill development", "/questions", [("Literature", "/questions"), ("Writing", "/writing"), ("Coding", "/coding"), ("Stats & ML", "/stats")]),
     ("How it works", "/how", []),
   ] %}
   {% set ns = namespace(subs=[], on=false) %}

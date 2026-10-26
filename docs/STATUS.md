@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-22 (after `6e3a8e7`)
+**Updated:** 2026-10-24 (after `928ec4d`, with ADR-0032 not committed)
 
 <!--
 CONVENTION -- read before editing.
@@ -33,8 +33,11 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 ## In progress
 
-- **The first timed sweep runs on 2026-10-23 at 06:00 PDT** (`phdcode-sweep.timer`, installed 2026-10-22). Its first step, `phdcode ingest`, parses the 16 PDFs that `phdcode queue` put into the queue on 2026-10-22 (from Fumi's download folder; 15 matched by DOI, 1 by title). Then the sweep of the 14 saved searches, `headscore`, `summarize` and `backup`. Look at the result in `journalctl --user -u phdcode-sweep.service` and on the page Digests.
+- **The sweep timer works:** the sweeps of 2026-10-23 and 2026-10-24 at 06:00 PDT finished (`journalctl --user -u phdcode-sweep.service`).
+- **The briefs (ADR-0032)** are tested on `phdcode_test` with a fake model, and live with Claude Haiku 5.5 (`BRIEF_MODEL`, the default): the interests and triage briefs, 10 to 11 s each. No digest summary is written yet: the first comes from the sweep of 2026-10-25 06:00 PDT, through `claude -p` in the sweep unit (not tested from that unit; the page Ask runs it from the interface unit).
+- The page Triage holds the 98 papers that the sweep saved since 2026-10-13; the page Papers holds the 104 of the user's library.
 - The library: 117 papers, 31 with full text (2,171 chunks) before that ingest.
+- **The puzzles (ADR-0033)** are tested on `phdcode_test` with a fake model (the check of the tests, the run, the score, both pages) and live with Claude Haiku 5.5: one coding puzzle (7 tests, passing on its reference, 50 s) and one stats puzzle (36 s), both from 2026-10-24 and not answered. Not tested: a score from a real model saved through the page. The review topics (brush up on) are tested on `phdcode_test` with a fake model, and with one Haiku grade that was not saved (3 exact MIL concepts for a wrong answer).
 - The paper of the day (ADR-0024, now on the overview) and the writing coach (ADR-0025) are tested with a fake model only, not yet with a real model.
 - **The upload of a PDF (ADR-0031) is tested up to the queue only** (`phdcode_test`, the ingest unit replaced by a stub). The first real upload starts `phdcode-ingest`, which also parses the other PDFs in the queue. Check it with `journalctl --user -u phdcode-ingest`.
 

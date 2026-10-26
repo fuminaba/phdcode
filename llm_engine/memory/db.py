@@ -111,7 +111,7 @@ async def get_paper(paper_id: int) -> Optional[dict[str, Any]]:
     row = await (await get_pool()).fetchrow(
         "SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, "
         "       p.doi, p.url, p.pdf_url, p.abstract, p.methods_summary, p.results_summary, "
-        "       p.parse_mode, p.importance, p.notes, p.read_at, p.deleted_at, "
+        "       p.parse_mode, p.importance, p.notes, p.read_at, p.deleted_at, p.origin, "
         "       (SELECT count(*) FROM chunks c WHERE c.paper_id = p.id) AS chunks, "
         "       COALESCE(("
         "           SELECT array_agg(k.word ORDER BY k.word) FROM paper_keywords pk "
@@ -304,6 +304,14 @@ HITS_JOIN = (
 )
 
 
+# The highest triage probability of paper p over its saved searches, or NULL
+# for a paper that triage did not judge.
+TRIAGE_OF_PAPER = (
+    "(SELECT max(t.probability) FROM triaged_hits t JOIN saved_searches s ON s.id = t.saved_search_id "
+    "WHERE s.source = p.source AND t.source_id = p.source_id)"
+)
+
+
 async def pending_papers() -> list[dict[str, Any]]:
     """The full-text papers with a pending model step: no methods or results
     summary, or a local PDF (no source) with no title. needs_metadata marks
@@ -387,6 +395,24 @@ async def search_papers(
         query_embedding, query, max_results, _CANDIDATE_POOL, _RRF_K,
     )
     return [dict(row) for row in rows]
+
+
+async def pertinence(query: str, query_embedding: list[float], paper_ids: Sequence[int]) -> dict[int, float]:
+    """The hybrid score of each of these papers against the query (ADR-0032):
+    the fusion of search_papers over the concept facet, ranked among these
+    papers only, scaled so that 1 is the first rank in both lists. A paper
+    without a concept embedding or a matching word ranks lower or not at all."""
+    if not paper_ids:
+        return {}
+    # ponytail: rank-based, so a score moves when the set of papers changes,
+    # and BM25 takes its IDF from these papers only; a calibrated score is
+    # the System One head's job (ADR-0032).
+    rows = await (await get_pool()).fetch(
+        _rrf_cte("papers", "concept_embedding", "concept_tsv", "id = ANY($6::bigint[])")
+        + "SELECT id, score FROM fused LIMIT $3",
+        query_embedding, query, len(paper_ids), len(paper_ids), _RRF_K, list(paper_ids),
+    )
+    return {row["id"]: row["score"] * (_RRF_K + 1) / 2 for row in rows}
 
 
 async def search_chunks(

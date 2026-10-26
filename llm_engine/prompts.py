@@ -100,8 +100,21 @@ def question_prompt(papers: str, focus: str, question_type: str, axis_sets: dict
     )
 
 
+def review_topics_instruction(known: list[str]) -> str:
+    # The concepts to brush up on (ADR-0033). known: the names of earlier
+    # answers, so that a repeated gap gets the same name and is counted.
+    reuse = f" Reuse a name from this list when it fits: {'; '.join(known)}." if known else ""
+    return (
+        " In review_topics, list 0 to 3 concepts or subconcepts that the "
+        "answer shows the student should brush up on, each as a short name "
+        "of 2 to 6 words, general enough to come up again (for example "
+        "\"Bayes' rule with low base rates\", not a sentence about this "
+        "answer). Leave it empty if the answer shows no gap." + reuse
+    )
+
+
 def grade_prompt(question: str, model_answer: str, key_points: list[str], papers: str, library: str,
-                 answer: str) -> str:
+                 answer: str, known_topics: list[str]) -> str:
     # The grade of the daily question (ADR-0020, ADR-0021).
     points = "\n".join(f"- {p}" for p in key_points) or "(none)"
     return (
@@ -118,6 +131,7 @@ def grade_prompt(question: str, model_answer: str, key_points: list[str], papers
         "the answer cites, by title, author, year or id, where the paper "
         "supports the claim. Leave out a citation that is wrong. In feedback, "
         "write 2 to 4 sentences: what was right, what was missing or wrong."
+        + review_topics_instruction(known_topics)
     )
 
 
@@ -203,4 +217,125 @@ def writing_review_prompt(kind: str, prompt: str, audience: str, max_words: int,
         "(your version) and why (one short sentence). In revision, rewrite "
         "the whole answer as a strong writer would, within the word limit, "
         "with the student's content and voice."
+    )
+
+
+def interests_brief_prompt(library: str, searches: str) -> str:
+    # The interests brief (ADR-0032); it is also the query of the pertinence.
+    return (
+        "Describe the research interests of a PhD student from the papers of "
+        "the student's library. A star (*) marks a paper that the student "
+        "rated crucial or recommended.\n\n"
+        f"Library:\n{library}\n\n"
+        f"The interest statements of the student's saved searches:\n{searches}\n\n"
+        "Write one paragraph of 120 to 200 words in plain prose, to the "
+        "student (\"Your library ...\"): the main topics, methods, data and "
+        "clinical questions, the most important first. Use 8 to 15 keywords "
+        "of interest in the prose, each in bold Markdown (**keyword**) at its "
+        "first use. Use only what the titles and the statements show. Reply "
+        "with the paragraph only."
+    )
+
+
+def triage_brief_prompt(interests: str, papers: str) -> str:
+    # The triage brief (ADR-0032).
+    return (
+        "You help a PhD student choose what to read first.\n\n"
+        f"The student's interests:\n{interests}\n\n"
+        "These new papers wait in triage, the most pertinent first. "
+        "Pertinence (0 to 1) is the match of the paper with the interests; "
+        "triage (0 to 1) is a model's probability that the student wants to "
+        "read the paper.\n\n"
+        f"{papers}\n\n"
+        "Write in Markdown. First, one or two sentences on what the papers in "
+        "triage cover as a group. Then a numbered list of the 3 to 5 papers "
+        "to read first, the best first: each as [P<id>] with a short title, "
+        "then one or two sentences on why, from the abstract and the "
+        "interests. Pertinence and triage are evidence, not the only reason. "
+        "Use only facts from the abstracts. Reply with the Markdown only."
+    )
+
+
+def digest_brief_prompt(day: str, interests: str, papers: str) -> str:
+    # The brief of one day of the digest (ADR-0032).
+    return (
+        "You write the summary of findings of a daily literature sweep for a "
+        "PhD student.\n\n"
+        f"The student's interests:\n{interests}\n\n"
+        f"The relevant new papers that the sweep found on {day}, the most "
+        "pertinent first. Pertinence (0 to 1) is the match of the paper with "
+        "the interests; triage (0 to 1) is a model's probability that the "
+        "student wants to read the paper.\n\n"
+        f"{papers}\n\n"
+        "Write in Markdown. First, one paragraph of 60 to 150 words: what "
+        "happened in the field in these papers (the main themes, methods and "
+        "results). Then a list of the 2 to 4 papers most pertinent to the "
+        "student, each as [P<id>] with a short title and one sentence on why. "
+        "Use only facts from the abstracts. Reply with the Markdown only."
+    )
+
+
+def puzzle_prompt(track: str, topic: str, puzzle_type: str, language: Optional[str]) -> str:
+    # A new puzzle (ADR-0033). language: the language of a coding puzzle, or
+    # None for a stats puzzle.
+    if language is None:
+        return (
+            "You train a PhD student in medical image analysis with machine "
+            "learning for oncology in statistics and machine learning. Write "
+            "one puzzle that takes 10 to 30 minutes to answer in a few "
+            "paragraphs, with numbers where they apply.\n\n"
+            f"Topic: {topic}\nType: {puzzle_type}\n\n"
+            "Use a concrete setting, from pathology or oncology where it fits, "
+            "and give all the data that the answer needs. The puzzle must have "
+            "one defensible answer, not only an opinion.\n\n"
+            "In prompt, write the puzzle in Markdown. In reference, write a "
+            "full model answer with the working. In key_points, list the 2 to "
+            "5 points that a correct answer must contain. Leave starter and "
+            "tests empty."
+        )
+    return (
+        "You train a PhD student in medical image analysis with machine "
+        f"learning for oncology in coding in {language}. Write one coding "
+        "puzzle that takes 10 to 30 minutes.\n\n"
+        f"Topic: {topic}\nType: {puzzle_type}\n\n"
+        "The answer is one module solution.py; only the standard library, "
+        "numpy, pandas and scipy are available, with no files and no network.\n\n"
+        "In prompt, write the puzzle in Markdown: the function or functions to "
+        "write, with their names, arguments and return values, and one or two "
+        "examples. In starter, write the code that the student starts from: "
+        "the signatures with a docstring (or, for Debug and Refactor, the "
+        "code to change). In tests, write a test module: it starts with "
+        "`from solution import ...`, and it has 4 to 8 functions named "
+        "test_..., each with plain assert statements, which cover the normal "
+        "cases and the edge cases. In reference, write a complete "
+        "solution.py that passes every test. In key_points, list the 2 to 4 "
+        "ideas that a good solution uses."
+    )
+
+
+def puzzle_grade_prompt(puzzle: dict, answer: str, results: Optional[list], known_topics: list[str]) -> str:
+    # The score of an answer to a puzzle (ADR-0033). results: the test
+    # results of a coding puzzle, or None.
+    key_points = "\n".join(f"- {k}" for k in puzzle["key_points"])
+    if results is None:
+        evidence = ""
+        rubric = ("Score the correctness and the reasoning: a correct answer "
+                  "with the key points and clear working scores 8 to 10.")
+    else:
+        passed = sum(r["ok"] for r in results)
+        lines = "\n".join(f"- {r['name']}: {'pass' if r['ok'] else 'FAIL ' + r['error']}" for r in results)
+        evidence = f"The tests ran on the answer: {passed} of {len(results)} passed.\n{lines}\n\n"
+        rubric = ("The tests decide most of the score: with a failed test, "
+                  "give at most 6. Then judge the clarity, the idiom and the "
+                  "efficiency of the code.")
+    return (
+        "You train a PhD student. Score the student's answer to this puzzle "
+        "from 0 to 10.\n\n"
+        f"Puzzle:\n{puzzle['prompt']}\n\n"
+        f"Reference answer:\n{puzzle['reference']}\n\nKey points:\n{key_points}\n\n"
+        f"{evidence}The student's answer:\n{answer}\n\n"
+        f"{rubric} In feedback, write in Markdown: what is right, what is "
+        "wrong or missing (with the reason), and the one change that would "
+        "improve the answer most, with a short example if it helps. Do not "
+        "repeat the reference answer in full." + review_topics_instruction(known_topics)
     )
