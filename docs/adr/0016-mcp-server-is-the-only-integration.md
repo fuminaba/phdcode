@@ -1,6 +1,6 @@
 # ADR-0016: An MCP server over stdio is the only integration
 
-**Status:** Accepted — 2026-10-10
+**Status:** Accepted — 2026-10-10; amended by [ADR-0035](0035-mcp-over-http-for-another-user.md) (MCP over HTTP for a client of another Linux user)
 **Supersedes:** [ADR-0005](0005-integrate-via-extensions-not-mcp.md)
 
 ## Context

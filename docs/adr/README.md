@@ -45,6 +45,7 @@ superseded most of them. Read 0006 and 0014 to 0028 for the current design.
 | [0031](0031-interface-tabs-uploads-and-saved-searches.md) | Five tabs in the interface; uploads and saved searches change in it | Accepted |
 | [0032](0032-triage-page-briefs-and-pertinence.md) | The page Triage, the briefs of a model, and the pertinence | Accepted |
 | [0033](0033-coding-and-stats-puzzles.md) | Daily puzzles in coding and in statistics and machine learning | Accepted |
+| [0035](0035-mcp-over-http-for-another-user.md) | MCP over HTTP with a token, for a client of another Linux user | Accepted |
 
 An ADR is valid while its premises are true. To re-open one, name the premise
 that changed, and supersede it in a new ADR. Edit only the status line of the

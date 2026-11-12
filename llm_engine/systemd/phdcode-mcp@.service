@@ -1,0 +1,26 @@
+# The phdcode MCP server over HTTP (ADR-0035), one instance for each
+# deployment: phdcode-mcp@<name>. The instance reads only its own env file,
+# %E/phdcode/mcp-<name>.env, never %E/phdcode/env (that file is the .env of
+# one clone, and its DATABASE_URL would win over the .env of the other):
+#
+#   PHDCODE_ENV=<the Python environment where phdcode is installed>
+#   PHDCODE_DIR=<the clone of this deployment; its .env gives the database and LOG_DIR>
+#   PHDCODE_MCP_PORT=<a free port>
+#   PHDCODE_MCP_TOKEN=<openssl rand -hex 32>
+#
+#   systemctl --user link <repo>/llm_engine/systemd/phdcode-mcp@.service
+#   systemctl --user enable --now phdcode-mcp@<name>.service
+#
+# A client: http://127.0.0.1:<port>/mcp with "Authorization: Bearer <token>".
+[Unit]
+Description=phdcode MCP server over HTTP (%i)
+After=network-online.target
+
+[Service]
+EnvironmentFile=%E/phdcode/mcp-%i.env
+ExecStart=/bin/sh -c 'cd "$PHDCODE_DIR" && exec "$PHDCODE_ENV/bin/python" -m llm_engine.mcp_server'
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
