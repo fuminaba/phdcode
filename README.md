@@ -115,7 +115,7 @@ For Claude Code, register the server once. With `-s user`, phdcode is available 
 claude mcp add -s user phdcode -- <the full path of phdcode-mcp>
 ```
 
-For another MCP client, add a stdio server with the same command.
+For another MCP client, add a stdio server with the same command. For a client that runs as another Linux user, run the server over HTTP with a token: [ADR-0035](docs/adr/0035-mcp-over-http-for-another-user.md) and `llm_engine/systemd/phdcode-mcp@.service`.
 
 ### 5. Add papers and ask
 

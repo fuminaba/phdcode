@@ -4,11 +4,17 @@ Any MCP client starts it over stdio, for example:
 
     claude mcp add phdcode -- <env>/bin/phdcode-mcp
 
+With PHDCODE_MCP_PORT set, it serves MCP over HTTP on 127.0.0.1 instead, for
+a client that runs as another Linux user (ADR-0035): each request needs
+"Authorization: Bearer <PHDCODE_MCP_TOKEN>". Start it from the folder of its
+clone (PHDCODE_DIR), so that the code and the .env of that clone load.
+
 stdout carries the protocol, so nothing in this process prints: logging goes
 to stderr, and the PDF parse runs in a subprocess (documents.py).
 """
 import asyncio
 import functools
+import hmac
 import inspect
 import json
 import logging
@@ -18,6 +24,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import requests
 from mcp.server.mcpserver import MCPServer
@@ -54,6 +61,9 @@ DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:8620")
 # PHDCODE_TOOLS="a,b": the server has only these tools (the page Ask gives
 # its agent the local read-only ones, ADR-0030). Unset: all tools.
 _ONLY_TOOLS = set(filter(None, os.getenv("PHDCODE_TOOLS", "").split(",")))
+# Over HTTP the client is another Linux user (ADR-0035): no tool reads a
+# local file for it.
+_HTTP = bool(os.getenv("PHDCODE_MCP_PORT"))
 _FIGURE = re.compile(r"!\[[^\]]*\]\(([^)/]+)\)")
 
 INSTRUCTIONS = """\
@@ -234,10 +244,10 @@ async def ingest_pdf(paper: str) -> dict[str, Any]:
     paper (from OpenAlex by its DOI, else the model also extracts its title,
     authors and abstract). Returns the paper_id, the chunk count and, under
     "pending", each step that failed. A pending step does not stop the
-    search: the chunks are stored.
+    search: the chunks are stored. Over HTTP, a reference only.
     """
-    path = Path(paper).expanduser().resolve()
-    if path.is_file():
+    path = None if _HTTP else Path(paper).expanduser().resolve()
+    if path and path.is_file():
         content = path.read_bytes()
         if not content.startswith(b"%PDF"):
             raise ValueError(f"{path} is not a PDF.")
@@ -388,9 +398,44 @@ async def cancel_saved_search(saved_search_id: int) -> str:
     return f"Saved search {saved_search_id} is cancelled."
 
 
+def _serve_http(port: int) -> None:
+    """MCP over HTTP on 127.0.0.1. Every local user can reach the port, so
+    the token is the only check: refuse to start without one, or with the
+    code of another clone (its .env would give another database)."""
+    import uvicorn  # only the HTTP mode needs it
+
+    token = os.getenv("PHDCODE_MCP_TOKEN", "")
+    if len(token) < 32:
+        raise SystemExit("PHDCODE_MCP_PORT needs PHDCODE_MCP_TOKEN of 32 characters or more.")
+    code = Path(__file__).resolve().parents[1]
+    if code != Path(os.getenv("PHDCODE_DIR", "")).resolve():
+        raise SystemExit(f"The code is from {code}, not from PHDCODE_DIR. Start the server in PHDCODE_DIR.")
+    expected = f"Bearer {token}".encode()
+    app = server.streamable_http_app()
+
+    async def check_token(scope, receive, send):
+        if scope["type"] == "http" and not hmac.compare_digest(
+            dict(scope["headers"]).get(b"authorization", b""), expected
+        ):
+            await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Unauthorized"})
+            return
+        await app(scope, receive, send)
+
+    log.info(
+        "MCP over HTTP on 127.0.0.1:%d: code %s, database %s, papers %s",
+        port, code, urlsplit(os.getenv("DATABASE_URL", "")).path.lstrip("/"), PAPERS_DIR,
+    )
+    uvicorn.run(check_token, host="127.0.0.1", port=port, log_level="warning")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    server.run()
+    port = os.getenv("PHDCODE_MCP_PORT")
+    if port:
+        _serve_http(int(port))
+    else:
+        server.run()
 
 
 if __name__ == "__main__":
