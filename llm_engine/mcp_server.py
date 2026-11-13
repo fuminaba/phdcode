@@ -101,6 +101,10 @@ async def _lifespan(_server: MCPServer):
 server = MCPServer("phdcode", instructions=INSTRUCTIONS, lifespan=_lifespan)
 
 
+#: The answer of a tool whose list of results is empty.
+NO_RESULT = "No result: nothing matches."
+
+
 def tool(fn=None, *, read_only=False):
     """server.tool(), and an expected failure (bad input, a source or a
     download that fails) becomes a ToolError, so that the agent reads the
@@ -115,6 +119,10 @@ def tool(fn=None, *, read_only=False):
     validation imports jsonschema on the server event loop, which stops the
     run with a BlockingError.
 
+    An empty list becomes the text NO_RESULT: MCP sends a list as one content
+    item for each element, so an empty one arrived as "no output", and an agent
+    could not tell no match from a broken tool.
+
     Each call is logged in tool_calls (ADR-0028); a failed log only warns."""
     if fn is None:
         return functools.partial(tool, read_only=read_only)
@@ -127,7 +135,8 @@ def tool(fn=None, *, read_only=False):
     async def wrapper(*args, **kwargs):
         start, error = time.monotonic(), None
         try:
-            return await fn(*args, **kwargs)
+            result = await fn(*args, **kwargs)
+            return NO_RESULT if isinstance(result, list) and not result else result
         except (ValueError, RuntimeError, requests.RequestException) as e:
             error = str(e)
             raise ToolError(error) from e
