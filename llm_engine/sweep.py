@@ -161,9 +161,15 @@ async def sweep_one(saved: dict[str, Any]) -> list[str]:
     return lines + [""]
 
 
-async def sweep() -> Path:
-    """Sweeps all saved searches and writes the digest. Returns its path."""
+#: The first words of a line of sweep_one for a search or a triage that failed.
+FAILED = ("The search failed:", "Hits that wait for triage:")
+
+
+async def sweep() -> tuple[Path, int]:
+    """Sweeps all saved searches and writes the digest. Returns its path and the number of saved searches whose
+    search or triage failed (the command exits with 1 for them, so the unit and its monitor show the failure)."""
     await init_schema()
+    failed = 0
     try:
         now = datetime.now()
         lines = [f"# Sweep {now:%Y-%m-%d %H:%M}", ""]
@@ -171,7 +177,9 @@ async def sweep() -> Path:
         if not saved_searches:
             lines += ["No saved searches.", ""]
         for saved in saved_searches:
-            lines += await sweep_one(saved)
+            section = await sweep_one(saved)
+            failed += any(line.startswith(FAILED) for line in section)
+            lines += section
 
         DIGEST_DIR.mkdir(parents=True, exist_ok=True)
         path = DIGEST_DIR / f"{now:%Y-%m-%d}.md"
@@ -184,7 +192,7 @@ async def sweep() -> Path:
             log.warning(failure)
     finally:
         await close_pool()
-    return path
+    return path, failed
 
 
 if __name__ == "__main__":
