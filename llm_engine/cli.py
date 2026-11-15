@@ -57,7 +57,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     if args.command == "sweep":
         from .sweep import sweep
-        print(asyncio.run(sweep()))
+        path, failed = asyncio.run(sweep())
+        print(path)
+        if failed:
+            raise SystemExit(f"{failed} saved searches failed; their lines are in {path}")
     elif args.command == "import":
         from .bib_import import import_bib
         print("\n".join(asyncio.run(_with_db(import_bib(args.file, args.zotero_storage)))))
