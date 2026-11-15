@@ -24,6 +24,9 @@ the standardized cross-database schema shared with pubmed_search.py:
 }
 """
 
+import fcntl
+import os
+import time
 from typing import Any, Dict, List, Optional
 from xml.etree import ElementTree as ET
 
@@ -34,9 +37,38 @@ ARXIV_NS = "http://arxiv.org/schemas/atom"
 NAMESPACES = {"atom": ATOM_NS, "arxiv": ARXIV_NS}
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
+# The terms of the arXiv API: at most one request every 3 seconds, from one machine. The MCP servers of each
+# deployment and the sweep are separate processes on one machine, so the gate is a file: its lock lets one
+# request through at a time, and its modification time is the time of the last request.
+PACE_S = 3.0
+RETRY_S = (10, 30, 60)  # the waits after HTTP 429 or 503 (when the reply gives no Retry-After)
+GATE = os.environ.get("PHDCODE_ARXIV_GATE", "/tmp/phdcode-arxiv.gate")
 
 VALID_SORT_BY = {"relevance", "lastUpdatedDate", "submittedDate"}
 VALID_SORT_ORDER = {"ascending", "descending"}
+
+def _paced_get(params: dict[str, Any], timeout: int) -> requests.Response:
+    """One GET of the arXiv API through the gate: at least PACE_S seconds after the last request of any process
+    on this machine, and again after HTTP 429 or 503, with the waits of RETRY_S."""
+    for wait in (*RETRY_S, None):
+        with open(GATE, "a") as gate:
+            fcntl.flock(gate, fcntl.LOCK_EX)
+            gap = time.time() - os.fstat(gate.fileno()).st_mtime
+            if 0 <= gap < PACE_S:
+                time.sleep(PACE_S - gap)
+            try:
+                response = requests.get(ARXIV_API_URL, params=params, timeout=timeout)
+            finally:
+                os.utime(GATE)
+        if response.status_code not in (429, 503) or wait is None:
+            return response
+        try:
+            wait = float(response.headers.get("Retry-After", wait))
+        except ValueError:  # Retry-After can also be a date
+            pass
+        time.sleep(min(wait, 120))
+    return response
+
 
 def search_arxiv(
     raw_query: str,
@@ -64,7 +96,7 @@ def search_arxiv(
     }
 
     try:
-        response = requests.get(ARXIV_API_URL, params=params, timeout=timeout)
+        response = _paced_get(params, timeout)
         response.raise_for_status()
     except requests.RequestException as e:
         raise RuntimeError(f"arXiv API request failed: {e}") from e
