@@ -1,4 +1,4 @@
-# The sweep (ADR-0015, item 6). Install: see phdcode-sweep.timer.
+# The weekly sweep (ADR-0015 item 6, ADR-0036). Install: see phdcode-sweep.timer.
 [Unit]
 Description=phdcode sweep: run the saved searches and write the digest
 After=network-online.target
@@ -7,12 +7,12 @@ After=network-online.target
 Type=oneshot
 # The phdcode command of the Python environment where phdcode is installed
 # (PHDCODE_ENV in .env).
-# The PDF queue first (its parses use the GPU while llama-server is stopped),
-# then the sweep (triage starts llama-server through its socket, ADR-0018),
-# then the shadow score of the System One head (ADR-0028: it stops llama-server
-# for about a minute), then the pending summaries (llama-server starts again),
+# The sweep (triage starts llama-server through its socket, ADR-0018), then
+# the shadow score of the System One head (ADR-0028: it stops llama-server for
+# about a minute), then the PDF batch (ADR-0036: fetch, then marker on a VMQ GPU
+# VM; it waits hours for the VM), then the pending summaries (SUMMARY_MODEL),
 # then the backup. Each step runs also if a step before it fails, and the unit
 # fails when one step failed, so that the monitor shows it on the same day.
 EnvironmentFile=%E/phdcode/env
-ExecStart=/bin/sh -c 'rc=0; for step in ingest sweep headscore summarize backup; do "${PHDCODE_ENV}/bin/phdcode" "$$step" || { echo "phdcode $$step failed" >&2; rc=1; }; done; exit $$rc'
+ExecStart=/bin/sh -c 'rc=0; for step in sweep headscore pdfs summarize backup; do "${PHDCODE_ENV}/bin/phdcode" "$$step" || { echo "phdcode $$step failed" >&2; rc=1; }; done; exit $$rc'
 Nice=10

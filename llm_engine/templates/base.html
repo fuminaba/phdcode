@@ -135,7 +135,7 @@ async function uploadPdfs(input, paper) {
     const reply = await r.json();
     lines.push(r.ok ? reply.report : `${file.name}: ${reply.detail || `HTTP ${r.status}`}`);
   }
-  msg.textContent = lines.join("\n") + "\nEach queued PDF is now parsed, chunked, embedded and summarized. Reload the page to see its state.";
+  msg.textContent = lines.join("\n") + "\nEach PDF waits in the queue: press \"Parse the queue now\" on the Overview page, or the Monday batch parses it.";
   input.value = "";
 }
 </script>

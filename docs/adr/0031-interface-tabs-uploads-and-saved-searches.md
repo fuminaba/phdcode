@@ -1,6 +1,6 @@
 # ADR-0031: Five tabs in the interface; uploads and saved searches change in it
 
-**Status:** Accepted — 2026-10-22. Item 1 amended by [ADR-0033](0033-coding-and-stats-puzzles.md) (the sub-tabs of Skill development).
+**Status:** Accepted — 2026-10-22. Item 1 amended by [ADR-0033](0033-coding-and-stats-puzzles.md) (the sub-tabs of Skill development). The upload amended by [ADR-0036](0036-fetch-open-access-pdfs.md) (item 7): an upload only joins the PDF queue; it no longer starts the ingest.
 
 ## Context
 

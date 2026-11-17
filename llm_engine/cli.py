@@ -39,6 +39,10 @@ def main() -> None:
     queue = commands.add_parser("queue", help="local PDFs into the queue, each to its paper; then phdcode ingest")
     queue.add_argument("files", type=Path, nargs="+")
     queue.add_argument("--paper", type=int, help="the paper_id of the PDF, if phdcode finds the wrong paper (one PDF)")
+    fetch = commands.add_parser("fetch", help="an open-access PDF for each abstract-only paper into the queue (ADR-0036)")
+    fetch.add_argument("--limit", type=int, help="at most this many papers, newest first (default: all)")
+    fetch.add_argument("--dry-run", action="store_true", help="print the link of each paper; change nothing")
+    commands.add_parser("pdfs", help="fetch, then parse the PDF queue on a VMQ GPU VM and import it (ADR-0036)")
     ingest = commands.add_parser("ingest", help="parse each PDF in the queue; then run phdcode summarize")
     ingest.add_argument("--limit", type=int, help="parse at most this many PDFs")
     commands.add_parser("summarize", help="make the pending summaries through SUMMARY_MODEL")
@@ -67,6 +71,18 @@ def main() -> None:
     elif args.command == "queue":
         from .memory import queue_local_pdfs
         print("\n".join(asyncio.run(_with_db(queue_local_pdfs(args.files, args.paper)))))
+    elif args.command == "fetch":
+        from .fetch import fetch_pdfs
+        report, failed = asyncio.run(_with_db(fetch_pdfs(args.limit or None, args.dry_run)))
+        print("\n".join(report))
+        if failed:
+            raise SystemExit(f"{failed} lookups failed; the next fetch tries these papers again")
+    elif args.command == "pdfs":
+        from .vmparse import pdfs
+        report, problems = asyncio.run(_with_db(pdfs()))
+        print("\n".join(report))
+        if problems:
+            raise SystemExit(f"{problems} failed lookups or VMQ jobs; see the lines above")
     elif args.command == "ingest":
         from . import gpu
         from .memory import ingest_queue
@@ -101,7 +117,7 @@ def main() -> None:
             sys.exit(0 if free >= args.mib else 1)
 
 
-async def _with_db(work: Awaitable[list[str]]) -> list[str]:
+async def _with_db[T](work: Awaitable[T]) -> T:
     from .memory import close_pool, init_schema
     await init_schema()
     try:

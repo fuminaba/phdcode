@@ -31,7 +31,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import sources
+from . import CLONE, sources
 from .documents import PAPERS_DIR
 from .embeddings import embed
 from .memory import (
@@ -416,7 +416,7 @@ def _serve_http(port: int) -> None:
     token = os.getenv("PHDCODE_MCP_TOKEN", "")
     if len(token) < 32:
         raise SystemExit("PHDCODE_MCP_PORT needs PHDCODE_MCP_TOKEN of 32 characters or more.")
-    code = Path(__file__).resolve().parents[1]
+    code = CLONE
     if code != Path(os.getenv("PHDCODE_DIR", "")).resolve():
         raise SystemExit(f"The code is from {code}, not from PHDCODE_DIR. Start the server in PHDCODE_DIR.")
     expected = f"Bearer {token}".encode()

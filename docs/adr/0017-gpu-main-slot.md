@@ -1,6 +1,6 @@
 # ADR-0017: GPU policy — embeddings on the CPU, one tenant on the GPU
 
-**Status:** Accepted — 2026-10-11 (revised from the proposal of 2026-10-10).
+**Status:** Accepted — 2026-10-11 (revised from the proposal of 2026-10-10). Amended by [ADR-0036](0036-fetch-open-access-pdfs.md) on 2026-11-16: the weekly PDF batch parses in balanced mode on a VM.
 The `balanced` mode (Surya, item 9) stays Proposed until a PDF needs it and the
 VRAM test runs.
 **Supersedes:** [ADR-0007](0007-gpu-arbitration-via-os-level-lock.md), [ADR-0008](0008-retire-celery-and-redis.md)

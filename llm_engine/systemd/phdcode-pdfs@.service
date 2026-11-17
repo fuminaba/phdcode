@@ -1,0 +1,17 @@
+# The PDF steps of a second deployment (ADR-0035, ADR-0036): phdcode-pdfs@<name>.
+# The first deployment runs them in phdcode-sweep.service. The steps run in the
+# folder of the clone with python -m, so that the code, the .env and the
+# database of that clone load (the phdcode command imports the editable
+# install, the first clone). The env file is the one of phdcode-mcp@<name>.
+#
+#   systemctl --user link <repo>/llm_engine/systemd/phdcode-pdfs@.service <repo>/llm_engine/systemd/phdcode-pdfs@.timer
+#   systemctl --user enable --now phdcode-pdfs@<name>.timer
+[Unit]
+Description=phdcode PDFs (%i): fetch the open-access PDFs, parse them on a VMQ VM, make the summaries
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%E/phdcode/mcp-%i.env
+ExecStart=/bin/sh -c 'cd "$PHDCODE_DIR" || exit 1; rc=0; for step in pdfs summarize; do "$PHDCODE_ENV/bin/python" -m llm_engine.cli "$$step" || { echo "phdcode $$step failed" >&2; rc=1; }; done; exit $$rc'
+Nice=10

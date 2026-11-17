@@ -26,6 +26,7 @@ phdcode reads its settings from `.env` at the root of the repository. A variable
 | `GRADE_MODEL` | `QUESTION_MODEL` | The default model that grades the answers; the page can choose another. |
 | `SYSONE_DIR`, `SYSONE_PYTHON` | none | The absolute paths of the repository of the System One head and of the Python that runs it (ADR-0028). With none, `phdcode headscore` scores nothing. |
 | `DEEPREAD_MODEL` | `claude-sonnet-5-5` | The default model of Deep read (ADR-0034), which examines and grades a session; the page can choose another route of `LLM_ROUTING`. |
+| `LIBRARY_LINK_PREFIX` | none | The prefix of the library login for the paywalled papers on the page Papers (ADR-0036), for example `https://go.openathens.net/redirector/ubc.ca?url=` at UBC. With none, a paper opens at its DOI link. Set it only in a deployment whose use the licences of the library allow. |
 | `BRIEF_MODEL` | `claude-haiku-5-5` | The LLM that writes the briefs (ADR-0032): the interests paragraph, the triage brief and the summary of findings of each day of the digest. A route of `LLM_ROUTING`; the menu of each brief can choose another for one brief. |
 | `TRIAGE_MODEL` | `SUMMARY_MODEL` | The LLM that judges each hit of the sweep: does the student with this library want it? If its server cannot answer (the GPU is cleared for training), the hits wait for the next sweep. |
 

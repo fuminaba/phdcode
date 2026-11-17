@@ -16,11 +16,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from . import CLONE
+
 load_dotenv()
 
 # A relative LOG_DIR is relative to the repo root: the MCP server can start
 # in any folder.
-PAPERS_DIR = Path(__file__).resolve().parents[1] / os.getenv("LOG_DIR", "logs") / "papers"
+PAPERS_DIR = CLONE / os.getenv("LOG_DIR", "logs") / "papers"
 
 # The parse runs beside training (data loaders), so it uses half the cores.
 PARSE_THREADS = max(1, (os.cpu_count() or 2) // 2)

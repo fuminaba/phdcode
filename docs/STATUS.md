@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-10-24 (after `928ec4d`, with ADR-0032 not committed)
+**Updated:** 2026-11-17 (Deep read, ADR-0034, and the PDF batch, ADR-0036)
 
 <!--
 CONVENTION -- read before editing.
@@ -33,6 +33,7 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 ## In progress
 
+- **MCP over HTTP (ADR-0035)**, committed in `acb7ab1`. The ViewsML deployment runs: the clone `~/Desktop/dev/phdcode-viewsml`, `phdcode-mcp@viewsml` on 127.0.0.1:8625, the database `phdcode_viewsml`. It has no sweep or backup: those units read `%E/phdcode/env`, the `.env` of this clone. Its weekly PDF batch (`pdfs`, `summarize`) runs in `phdcode-pdfs@viewsml.timer` (ADR-0036).
 - **The sweep timer works:** the sweeps of 2026-10-23 and 2026-10-24 at 06:00 PDT finished (`journalctl --user -u phdcode-sweep.service`).
 - **The briefs (ADR-0032)** are tested on `phdcode_test` with a fake model, and live with Claude Haiku 5.5 (`BRIEF_MODEL`, the default): the interests and triage briefs, 10 to 11 s each. No digest summary is written yet: the first comes from the sweep of 2026-10-25 06:00 PDT, through `claude -p` in the sweep unit (not tested from that unit; the page Ask runs it from the interface unit).
 - The page Triage holds the 98 papers that the sweep saved since 2026-10-13; the page Papers holds the 104 of the user's library.
@@ -40,7 +41,8 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 - **The puzzles (ADR-0033)** are tested on `phdcode_test` with a fake model (the check of the tests, the run, the score, both pages) and live with Claude Haiku 5.5: one coding puzzle (7 tests, passing on its reference, 50 s) and one stats puzzle (36 s), both from 2026-10-24 and not answered. Not tested: a score from a real model saved through the page. The review topics (brush up on) are tested on `phdcode_test` with a fake model, and with one Haiku grade that was not saved (3 exact MIL concepts for a wrong answer).
 - **Deep read (ADR-0034)** is tested on `phdcode_test` with a fake model (items, skills, area fallback, scores, the quote check, `read_at`, the error codes), and with one real `claude-sonnet-5-5` session on the stub paper P1 (one sentence): 4 to 6 s a turn. On a real paper (P51, 22 560 tokens) a turn takes 4 to 8 s, and the second turn reads the paper from the prompt cache. The live database gets the two tables at the next `init_schema` (sweep, MCP server or a `phdcode` command), and the page needs a restart of `phdcode-dashboard`.
 - The paper of the day (ADR-0024, now on the overview) and the writing coach (ADR-0025) are tested with a fake model only, not yet with a real model.
-- **The upload of a PDF (ADR-0031) is tested up to the queue only** (`phdcode_test`, the ingest unit replaced by a stub). The first real upload starts `phdcode-ingest`, which also parses the other PDFs in the queue. Check it with `journalctl --user -u phdcode-ingest`.
+- **Paywalled papers (ADR-0036, item 8):** the page Papers marks the papers of the library with no open-access PDF "paywalled" (`/papers?filter=paywalled`); each row has a link through UBC OpenAthens (`LIBRARY_LINK_PREFIX` in the `.env` of this clone only) and an upload button. The UBC link is not tested with a login.
+- **An upload only joins the PDF queue (ADR-0036, item 7).** The button "Parse the queue now" on the Overview page starts the unit `phdcode-pdfs-now-<clone folder>` (`pdfs`, then `summarize`). Tested on `phdcode_test` with a stub `systemd-run` (2026-11-16); the first real press starts the backlog of about 430 PDFs. Check it with `journalctl --user -u phdcode-pdfs-now-phdcode` (ViewsLib: `-phdcode-viewsml`).
 
 Not done (Fumi's plans, 2026-10-14): textbooks as sources (for axes such as ML foundations): `embed()` needs batches first, a book has no methods or results summary, and its questions need chapters, not the abstract. A thesis section: the thesis in LaTeX on Overleaf, synced to GitHub; phdcode would read the `.tex` files of a clone (no PDF parse) and chunk them by section. The user's own papers as a separate kind.
 
@@ -54,12 +56,14 @@ The test scripts are not in the repo (no `tests/` folder yet).
 
 ## Known traps
 
+- **A second clone started outside its folder imports this clone** (the editable install in the environment `alira`), with the `.env` and the database of this clone, and no error. Start it in its folder (`python -m`); the HTTP mode refuses to start otherwise (ADR-0035).
 - **`pg_stat_user_tables.n_live_tup` showed 0 rows for tables that hold rows.** Count with `count(*)`.
 - **The Docker Compose project is `alira2`**, from the old repository name; `docker-compose.yml` pins `name: alira2`. Without it, `docker compose up` makes a new, empty project `phdcode`, and port 5432 is already in use.
 - **mcp 2.x is not the API of most examples.** `FastMCP` is `MCPServer` (`mcp.server.mcpserver`); client results use `structured_content` and `is_error`. Only a `ToolError` shows its message to the agent.
 - **OpenAlex with no key has a budget of $0.10 a day: 100 searches.** A lookup by ID is free. A bad filter or a spent budget comes back as an HTTP 400 or 429 with the reason in the body; the client raises it as a `ValueError`. The filter `from_created_date` needs a paid plan. A key goes into `OPENALEX_API_KEY`.
 - **Triage needs llama-server** (ADR-0018): during training (`phdcode gpu clear`) the hits wait, and the next sweep looks back to the last complete sweep of each search. Another GPU process with too little VRAM left also makes them wait.
-- **PubMed's `pdf_url` is the PMC article page, not a PDF.** `ingest_pdf` refuses it and asks for a local path.
+- **PubMed's `pdf_url` is the PMC article page, not a PDF.** `ingest_pdf` refuses it and asks for a local path; `phdcode fetch` gets the PDF from the PMC data set on S3 (ADR-0036).
+- **The NCBI ID converter answers 403 to each `requests` client** and 200 to `urllib` and curl (2026-11-16). `fetch.py` calls the lookup services with `urllib`.
 - **`phdcode-mcp` uses the live database** (`DATABASE_URL` in `.env`). A test sets `DATABASE_URL` to `phdcode_test` in the environment, which wins over `.env`.
 - **A running `phdcode-mcp` keeps the code of its start.** Each agent session starts its own; a change to the search reaches only new sessions.
 - **The keyword side ignores the websearch syntax** (`"phrase"`, `-word`) since ADR-0029: BM25 ranks a bag of words.
@@ -83,7 +87,9 @@ Recorded here only where the ADRs do not cover it:
 ## Running where
 
 - **`phdcode-llm-proxy.socket`** (systemd user unit, enabled) listens on port 8080 of the Tailscale address and of `127.0.0.1` only (the local drop-in `~/.config/systemd/user/phdcode-llm-proxy.socket.d/override.conf`, 2026-10-22, with `FreeBind=true`). It starts llama-server with Bonsai 2 27B at the first request; llama-server holds 14.4 GB of VRAM and `/tmp/gpu.lock` until 30 minutes after the last request. Check: `systemctl --user is-active phdcode-llm-proxy.socket phdcode-llm.service`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-llm`.
-- **`phdcode-sweep.timer`** (systemd user unit, enabled 2026-10-22): `phdcode-sweep.service` each day at 06:00, `Persistent=true`. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-sweep`.
+- **`phdcode-sweep.timer`** (systemd user unit, enabled 2026-10-22): `phdcode-sweep.service` each Monday at 06:00 since 2026-11-16 (daily before), `Persistent=true`: sweep, headscore, `pdfs` (the PDF batch on a VMQ VM, ADR-0036), summarize, backup. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-sweep`.
+- **`phdcode-pdfs@viewsml.timer`** (systemd user unit, 2026-11-16): `pdfs` and `summarize` for ViewsLib each Monday at 06:30. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-pdfs-viewsml`.
+- **The PDF batch (ADR-0036)** submits jobs to VMQ (`~/Desktop/dev/VMQ`, personal Hyperstack account); the folder of each job is `logs/vmq/<database>-<time>/`, its results `~/vmq-runs/<clone>/<job id>/`. `SUMMARY_MODEL` is `claude-haiku-5-5` in both `.env` files since 2026-11-16.
 - **`phdcode-dashboard.service`** (systemd user unit, enabled): the web interface on port 8620 of the Tailscale address only (it writes `papers.importance`, `papers.notes`, `papers.read_at`, `papers.deleted_at`, the tables `questions`, `settings` and `saved_searches`, and the PDF queue; uploads go to `logs/uploads/`, and it starts the transient unit `phdcode-ingest` (`phdcode ingest`, then `phdcode summarize`); it deletes the papers of the bin for good after the bin days, with their folders). It reads `.env` at start: restart it after a change. Registered in the vault: `Resources/Agents/Monitoring.md`, `server-phdcode-dashboard`.
 - Postgres (`alira2-postgres-1`) runs in Docker, with the test database `phdcode_test`. Redis (`alira2-redis-1`) still runs, but nothing uses it.
 - The MCP server is registered in Claude Code (`claude mcp add phdcode`) and in dcode (`~/.deepagents/.mcp.json`, user level, outside the repo); each session starts its own `phdcode-mcp`.

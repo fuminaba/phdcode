@@ -1,0 +1,13 @@
+# Runs phdcode-pdfs@<name>.service each Monday at 06:30, after the start of the
+# sweep of the first deployment (06:00; VMQ runs one job at a time, so this job
+# waits behind the job of the sweep), or at the next start of the machine.
+# Install: see phdcode-pdfs@.service.
+[Unit]
+Description=Run the phdcode PDF steps of %i weekly
+
+[Timer]
+OnCalendar=Mon *-*-* 06:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
