@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import CLONE
 from .generation import CLAUDE_BIN
 from .routes import ROUTE_NAMES, resolve
 
@@ -58,12 +59,17 @@ def models() -> list[str]:
 async def answer(question: str, model: str) -> str:
     """The answer of the harness of model to question, in Markdown. It runs
     in an empty temporary folder, so that no project file or CLAUDE.md is
-    read, with its own MCP config: phdcode with TOOLS only."""
+    read, with its own MCP config: phdcode with TOOLS only.
+
+    The server runs over stdio (an empty PHDCODE_MCP_PORT: the unit of
+    ViewsLib sets it for its HTTP server) and imports the code of this clone
+    (PYTHONPATH): from the temporary folder, the alira env imports the PhD
+    clone, and with it the .env and the database of that clone."""
     prompt = PROMPT.format(question=question)
     with tempfile.TemporaryDirectory(prefix="phdcode-ask-") as cwd:
         config = Path(cwd, "ask-mcp.json")
-        config.write_text(json.dumps({"mcpServers": {"phdcode": {
-            "command": MCP_BIN, "env": {"PHDCODE_TOOLS": ",".join(TOOLS)}}}}))
+        config.write_text(json.dumps({"mcpServers": {"phdcode": {"command": MCP_BIN, "env": {
+            "PHDCODE_TOOLS": ",".join(TOOLS), "PHDCODE_MCP_PORT": "", "PYTHONPATH": str(CLONE)}}}}))
         if model == DCODE:
             # The config replaces the user-level server of the same name.
             command = [DCODE_BIN, "-n", prompt, "-M", _DCODE_MODEL, "-q", "--no-interpreter",
