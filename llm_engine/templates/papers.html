@@ -36,7 +36,7 @@
   <td data-key="{{ p.pertinence or 0 }}">{{ "%.2f"|format(p.pertinence) if p.pertinence is not none }}</td>
   <td data-key="{{ p.triage or 0 }}">{{ "%.2f"|format(p.triage) if p.triage is not none }}</td>
   {% endif %}
-  <td style="white-space:nowrap">{% if triage %}<button type="button" class="tag keep" value="{{ p.id }}" title="Move to Papers">Keep</button> {% endif %}<button type="button" class="tag delete" value="{{ p.id }}" title="Move to the bin">Delete</button></td>
+  <td style="white-space:nowrap">{% if triage %}<button type="button" class="tag keep" value="{{ p.id }}" title="Move to Papers">Keep</button>{% else %}<button type="button" class="tag to-triage" value="{{ p.id }}" title="Move back to Triage">To triage</button>{% endif %} <button type="button" class="tag delete" value="{{ p.id }}" title="Move to the bin">Delete</button></td>
 </tr>
 {% else %}
 <tr><td colspan="13" class="muted">{{ "No papers wait in triage." if triage else "No papers yet." }}</td></tr>
@@ -54,6 +54,13 @@ document.querySelectorAll("button.delete").forEach(b => b.addEventListener("clic
 document.querySelectorAll("button.keep").forEach(b => b.addEventListener("click", async () => {
   const r = await fetch(`/papers/${b.value}/keep`, {method: "POST"});
   if (r.ok) b.closest("tr").remove(); else alert(`Not kept: HTTP ${r.status}`);
+}));
+// To triage asks first: it also clears the importance, so the paper leaves the library.
+document.querySelectorAll("button.to-triage").forEach(b => b.addEventListener("click", async () => {
+  const title = b.closest("tr").cells[1].querySelector("a").textContent;
+  if (!confirm(`Move "${title}" back to triage?\n\nIts importance is cleared, so it leaves your library until you keep it again.`)) return;
+  const r = await fetch(`/papers/${b.value}/keep?keep=false`, {method: "POST"});
+  if (r.ok) b.closest("tr").remove(); else alert(`Not moved: HTTP ${r.status}`);
 }));
 document.getElementById("filter").addEventListener("input", e => {
   const q = e.target.value.toLowerCase();

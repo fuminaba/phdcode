@@ -112,6 +112,11 @@ against prepared tests) or *stats* (statistics and machine learning, a written
 answer), of one topic and one type of the track (ADR-0033). The page of the
 daily question is named *Literature* since then; *Questions* is its old name.
 
+**Deep read** — an exam on one full-text paper (ADR-0034): the examiner model
+asks one question at a time and follows up on a weak answer; *Finish* grades
+each *item* (a question with its follow-ups and answers) by its *skill* of
+critical reading.
+
 **Hit** — a paper that a saved search returns. A hit is *new* until triage
 judges it for that saved search.
 

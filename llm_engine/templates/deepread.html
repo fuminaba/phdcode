@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{# Deep read (ADR-0034): an exam on one full-text paper, by the skills of critical reading. #}
+{% from "brush_up.html" import topics_line, brush_up_panel %}
+{% block title %}Deep read · phdcode{% endblock %}
+{% block head %}
+<style>
+.score { font-size: 22px; font-weight: 600; }
+.topics { display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: flex-start; }
+.topics svg { max-width: 100%; height: auto; }
+.topics svg text { fill: var(--muted); font-size: 12px; }
+.topics table { width: auto; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.msg-student, .msg-examiner, .grade { padding: 6px 10px; border-radius: 8px; margin: 6px 0; }
+.msg-student { background: var(--code); margin-left: 15%; white-space: pre-wrap; }
+.msg-examiner { border: 1px solid var(--line); margin-right: 15%; }
+.msg-examiner p:first-child { margin-top: 0; } .msg-examiner p:last-child { margin-bottom: 0; }
+.grade { border-left: 3px solid var(--accent); margin-right: 15%; }
+textarea#message { min-height: 120px; }
+/* A long title stays in the panel: the label takes the row, and the menu shrinks to fit. */
+.models label.paper { flex: 1 1 100%; display: flex; gap: 6px; align-items: center; min-width: 0; }
+#paper { flex: 1; min-width: 0; }
+</style>
+{% endblock %}
+{% block main %}
+<h1>Deep read</h1>
+<div class="cards" style="margin-bottom:14px">
+  <div class="card"><div class="n">{{ graded_sessions }}</div><div class="l">sessions graded</div></div>
+  <div class="card"><div class="n">{{ stats.answered }}</div><div class="l">questions graded</div></div>
+  <div class="card"><div class="n">{{ "%.1f"|format(stats.mean) if stats.mean is not none else "–" }}</div><div class="l">mean score (of 10)</div></div>
+</div>
+
+{% if current %}
+<h2>Session <span class="muted">· started {{ current.started_at|when }}</span></h2>
+<div class="panel">
+  <h3 style="margin:0"><a href="/papers/{{ current.paper_id }}">{{ current.title }}</a></h3>
+  <div class="muted"><a href="/papers/{{ current.paper_id }}/text">Full text</a> · examiner {{ current.model }}</div>
+  {% for m in messages %}
+    {% if m.area %}<div style="margin-top:12px"><span class="tag ok" title="{{ skills.get(m.skill, '') }}">{{ m.skill }}</span> <span class="tag" title="{{ areas.get(m.area, '') }}">{{ m.area }}</span> <span class="muted">question {{ m.item }}</span></div>{% endif %}
+    {% if m.role == "student" %}<div class="msg-student">{{ m.content }}</div>{% else %}<div class="msg-examiner">{{ m.content|md_cites }}</div>{% endif %}
+    {% set g = items.get(m.item) %}
+    {% if g and g.score is not none and (loop.last or loop.nextitem.item != m.item) %}
+    <div class="grade"><span class="score">{{ g.score }}/10</span>
+      <div class="md">{{ g.feedback|md_cites }}</div>
+      {% for q in g.quotes or [] %}<div class="muted" style="font-size:13px"><span class="{{ 'ok' if q.found else 'bad' }}">{{ "✓ found in the paper" if q.found else "✗ not found in the paper" }}</span>: “{{ q.quote }}”</div>{% endfor %}
+    </div>
+    {% endif %}
+  {% endfor %}
+  {% if current.finished_at %}
+    <h3>Summary</h3>
+    <div class="md">{{ current.summary|md_cites }}</div>
+    {{ topics_line(current.review_topics) }}
+    <p class="muted">Graded {{ current.finished_at|when }}. <button class="go alt" id="finish" data-id="{{ current.id }}">Grade again</button>
+       <button class="go alt" id="restart" data-id="{{ current.id }}">Start over</button> <span class="msg bad"></span></p>
+  {% else %}
+    <textarea id="message" aria-label="Your answer, or a question back" placeholder="Your answer, or a question back to the examiner (Ctrl+Enter sends)"></textarea>
+    <p><button class="go" id="send" data-id="{{ current.id }}">Send</button>
+       <button class="go alt" id="finish" data-id="{{ current.id }}">Finish and grade</button>
+       <button class="go alt" id="restart" data-id="{{ current.id }}">Start over</button>
+       <span class="muted">{{ items|length }} of about {{ questions }} questions. Each reply reads the whole paper again: it can take a minute.</span>
+       <span class="msg bad"></span></p>
+  {% endif %}
+</div>
+{% endif %}
+
+<h2>New session</h2>
+<div class="panel">
+  <p>Read the paper first. The examiner asks one question at a time, on comprehension, methods, results and statistics, and critique, and asks a follow-up when an answer is weak. Each question tests one skill of critical reading, your weakest first. "Finish" grades each answer and marks the paper as read.</p>
+  <div class="models">
+    <label class="paper">Paper <select id="paper">{% for p in papers %}<option value="{{ p.id }}"{{ " selected" if p.id == paper }}>{{ p.title }}{{ " (%d earlier)"|format(p.sessions) if p.sessions }}</option>{% endfor %}</select></label>
+    <label>Model <select id="model">{% for m in models %}<option{{ " selected" if m == default_model }}>{{ m }}</option>{% endfor %}</select></label>
+  </div>
+  <p class="muted" style="font-size:13px">Only papers with full text ({{ papers|length }}). For another paper, upload its PDF on its paper page.</p>
+  <p><button class="go" id="start">Start</button> <span class="msg bad"></span></p>
+</div>
+
+{{ brush_up_panel(brush_up) }}
+
+<h2>Skills of critical reading <span class="muted">(mean score of each skill, of 10)</span></h2>
+<div class="panel topics">
+  <svg viewBox="0 0 {{ radar.width }} {{ radar.height }}" width="{{ radar.width }}" role="img"
+       aria-label="Radar of the mean score of each skill of critical reading; the table beside it has the same numbers">
+    {% for ring in radar.rings %}<polygon points="{{ ring }}" fill="none" stroke="var(--line)"/>{% endfor %}
+    {% for a in radar.axes %}<line x1="{{ radar.cx }}" y1="{{ radar.cy }}" x2="{{ a.x }}" y2="{{ a.y }}" stroke="var(--line)"/>{% endfor %}
+    {% if stats.answered %}
+    <polygon points="{% for a in radar.axes %}{{ '%.1f,%.1f'|format(a.px, a.py) }} {% endfor %}"
+             fill="var(--accent)" fill-opacity=".18" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+    {% endif %}
+    {% for (skill, (n, mean)), a in zip(stats.skills.items(), radar.axes) %}
+    {% if n %}<circle cx="{{ a.px }}" cy="{{ a.py }}" r="4" fill="var(--accent)" stroke="var(--panel)" stroke-width="2"><title>{{ skill }}: {{ n }} graded, mean score {{ "%.1f"|format(mean) }}</title></circle>{% endif %}
+    <text x="{{ a.lx }}" y="{{ a.ly }}" text-anchor="{{ a.anchor }}"><title>{{ skills[skill] }}</title>{{ skill }}</text>
+    {% endfor %}
+    <text x="{{ radar.cx + 4 }}" y="{{ radar.axes[0].y + 12 }}" style="font-size:11px">{{ radar.top }}</text>
+  </svg>
+  {% for title, rows, specs in (("Skill", stats.skills, skills), ("Area", stats.areas, areas)) %}
+  <table>
+    <tr><th>{{ title }}</th><th>Graded</th><th>Mean score</th></tr>
+    {% for k, (n, mean) in rows.items() %}<tr><td title="{{ specs[k] }}">{{ k }}</td><td class="n">{{ n }}</td><td class="n">{{ "%.1f"|format(mean) if mean is not none else "–" }}</td></tr>{% endfor %}
+  </table>
+  {% endfor %}
+  {% if not stats.answered %}<p class="muted">No grades yet: the radar fills as you finish sessions.</p>{% endif %}
+</div>
+
+{% if history %}
+<h2>Earlier sessions</h2>
+<div class="panel"><table>
+  <tr><th>Started</th><th>Paper</th><th>Mean score</th><th></th></tr>
+  {% for x in history %}<tr><td>{{ x.started_at|when }}</td><td><a href="/papers/{{ x.paper_id }}">{{ x.title }}</a></td>
+    <td class="n">{{ "%.1f"|format(x.mean) if x.mean is not none else "–" }}</td>
+    <td><a href="/deepread?s={{ x.id }}">{{ "Open" if x.finished_at else "Continue" }}</a></td></tr>{% endfor %}
+</table></div>
+{% endif %}
+
+<script>
+try {
+  const select = document.getElementById("model"), saved = localStorage.getItem("deepread-model");
+  if ([...select.options].some(o => o.value === saved)) select.value = saved;
+  select.addEventListener("change", () => { try { localStorage.setItem("deepread-model", select.value); } catch {} });
+} catch {}
+document.getElementById("start").addEventListener("click", async e => {
+  const body = {paper_id: Number(document.getElementById("paper").value), model: document.getElementById("model").value};
+  // post() reloads on success; the new session is the latest unfinished one.
+  await post(e.target, "/deepread/new", body, "/deepread");
+});
+document.getElementById("send")?.addEventListener("click", e =>
+  post(e.target, `/deepread/${e.target.dataset.id}/reply`, {message: document.getElementById("message").value}));
+document.getElementById("finish")?.addEventListener("click", e =>
+  post(e.target, `/deepread/${e.target.dataset.id}/finish`, {}, `/deepread?s=${e.target.dataset.id}`));
+// Start over deletes the session with its grades; the new one is the latest unfinished, so /deepread shows it.
+document.getElementById("restart")?.addEventListener("click", e => {
+  if (confirm("Delete this session, with its answers and grades, and start again on the same paper?"))
+    post(e.target, `/deepread/${e.target.dataset.id}/restart`, {}, "/deepread");
+});
+document.getElementById("message")?.addEventListener("keydown", e => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) document.getElementById("send").click();
+});
+</script>
+{% endblock %}
