@@ -178,11 +178,46 @@ async def queue_pdf(paper_id: int, pdf_source: str) -> None:
                                      paper_id, pdf_source)
 
 
+async def unqueue_pdf(paper_id: int, error: Optional[str] = None) -> None:
+    """Takes an abstract-only paper out of the PDF queue (phdcode pdfs: the
+    VM had no result for it), so that the fetch finds it again; error (a
+    dated miss of the fetch) makes the fetch wait (ADR-0036)."""
+    await (await get_pool()).execute(
+        "UPDATE papers SET pdf_source = NULL, pdf_error = $2 WHERE id = $1 AND parse_mode IS NULL", paper_id, error)
+
+
+async def hold_pdfs(paper_ids: Sequence[int], job: str) -> None:
+    """Marks the queued PDFs of these papers as sent to the VMQ job job
+    (pdf_source "vmq:<job>"): queued_pdfs, and with it phdcode ingest, skips
+    them until phdcode pdfs imports the job (ADR-0036)."""
+    await (await get_pool()).execute(
+        "UPDATE papers SET pdf_source = 'vmq:' || $2 WHERE id = ANY($1) AND parse_mode IS NULL", list(paper_ids), job)
+
+
 async def queued_pdfs() -> list[dict[str, Any]]:
-    """The abstract-only papers in the PDF queue that did not fail, oldest first."""
+    """The abstract-only papers in the PDF queue that did not fail, oldest
+    first; not those of a VMQ job that is not imported yet (hold_pdfs)."""
     rows = await (await get_pool()).fetch(
         "SELECT id, source_id, pdf_source FROM papers "
-        "WHERE pdf_source IS NOT NULL AND parse_mode IS NULL AND pdf_error IS NULL AND deleted_at IS NULL ORDER BY id"
+        "WHERE pdf_source IS NOT NULL AND NOT starts_with(pdf_source, 'vmq:') "
+        "AND parse_mode IS NULL AND pdf_error IS NULL AND deleted_at IS NULL ORDER BY id"
+    )
+    return [dict(row) for row in rows]
+
+
+async def papers_to_fetch(limit: Optional[int], miss: str, retry_days: int) -> list[dict[str, Any]]:
+    """The abstract-only papers that `phdcode fetch` looks at (ADR-0036): no
+    PDF in the queue and no failure, or a miss of the fetch (pdf_error
+    "<miss> YYYY-MM-DD") older than retry_days. New papers first, then the
+    retries; newest first. limit None: all."""
+    rows = await (await get_pool()).fetch(
+        "SELECT id, doi, pdf_url FROM papers "
+        "WHERE parse_mode IS NULL AND pdf_source IS NULL AND deleted_at IS NULL AND CASE "
+        "  WHEN pdf_error IS NULL THEN true "
+        "  WHEN starts_with(pdf_error, $2) THEN right(pdf_error, 10)::date <= current_date - $3::int "
+        "  ELSE false END "
+        "ORDER BY pdf_error IS NOT NULL, id DESC LIMIT $1",
+        limit, miss, retry_days,
     )
     return [dict(row) for row in rows]
 

@@ -33,7 +33,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from . import sources
+from . import CLONE, sources
 from .embeddings import embed
 from .memory import (
     close_pool,
@@ -52,11 +52,12 @@ load_dotenv()
 log = logging.getLogger(__name__)
 
 # A relative DIGEST_DIR is relative to the repo root, as LOG_DIR is.
-DIGEST_DIR = Path(__file__).resolve().parents[1] / Path(os.getenv("DIGEST_DIR", "logs/digests")).expanduser()
+DIGEST_DIR = CLONE / Path(os.getenv("DIGEST_DIR", "logs/digests")).expanduser()
 LOOKBACK_DAYS = 7
 # ponytail: a saved search with more new hits in LOOKBACK_DAYS than this
 # loses the oldest ones; page through the source if a query is that broad.
-MAX_HITS = 50
+# 200 for the weekly sweep (ADR-0036): one search had 50 in 7 days.
+MAX_HITS = 200
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

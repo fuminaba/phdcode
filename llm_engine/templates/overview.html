@@ -100,10 +100,13 @@
   <div class="card"><div class="n">{{ counts.triaged }}</div><div class="l">hits judged by triage</div></div>
   <div class="card"><div class="n">{{ pending|length }}</div><div class="l">papers with pending model steps</div></div>
 </div>
-{% if states.get("PDF queued") %}<p class="warn">{{ states["PDF queued"] }} PDFs wait in the queue: the next upload or the daily sweep parses them.</p>{% endif %}
+<p class="{{ 'warn' if states.get('PDF queued') else 'muted' }}">{{ states.get("PDF queued", 0) }} PDFs wait in the queue. The Monday batch fetches the free PDFs and parses the queue on a VM.
+{% if pdfs_running %}A PDF run is active now: <code>journalctl --user -u {{ pdfs_unit }}</code>.
+{% else %}<button class="go alt" onclick="post(this, '/pdfs/run', {})">Parse the queue now</button> <span class="msg"></span>{% endif %}</p>
 {% if states.get("PDF failed") %}<p class="bad">{{ states["PDF failed"] }} PDFs failed: filter the <a href="/papers">papers</a> by "PDF failed", and upload each PDF on the page of its paper.</p>{% endif %}
+{% if paywalled %}<p class="warn">{{ paywalled }} papers of your library have no open-access PDF: download them by hand from <a href="/papers?filter=paywalled">Papers</a>.</p>{% endif %}
 {% if pending %}
-  <p class="warn">Pending model steps (the daily sweep runs them):
+  <p class="warn">Pending model steps (the weekly sweep runs them):
   {% for p in pending %}<a href="/papers/{{ p.id }}">paper {{ p.id }}</a>{{ " (metadata)" if p.needs_metadata }}{{ ", " if not loop.last }}{% endfor %}</p>
 {% endif %}
 

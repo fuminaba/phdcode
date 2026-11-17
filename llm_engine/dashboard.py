@@ -26,15 +26,16 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 
-from . import ask, briefs, deepread, gpu, puzzles, questions, writing
+from . import CLONE, ask, briefs, deepread, gpu, puzzles, questions, writing
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
+from .fetch import LIBRARY_LINK_PREFIX, MISS, library_link
 from .memory import close_pool, get_paper, get_pool, pending_papers, queue_local_pdfs
 from .memory.db import HITS_JOIN, TRIAGE_OF_PAPER, add_saved_search, cancel_saved_search, update_saved_search
 from .memory.document_index import CHUNK_OVERLAP, CHUNK_SIZE, MAP_CHUNK_SIZE
@@ -49,7 +50,7 @@ SOURCE_URL = {
 }
 # The same page as the documentation site (mkdocs.yml), so that the two
 # cannot differ.
-HOW_PAGE = Path(__file__).resolve().parents[1] / "docs" / "how-it-works.md"
+HOW_PAGE = CLONE / "docs" / "how-it-works.md"
 # Weakest first, as in the CHECK of papers.importance (schema.sql).
 IMPORTANCE = ("interesting", "recommended", "crucial")
 # The choices of the bin page; a paper stays in the bin this many days (ADR-0026).
@@ -100,7 +101,7 @@ def _paper_state(p: dict[str, Any]) -> str:
     if p["parse_mode"]:
         return "full text" if p["summarized"] else "full text, summaries pending"
     if p["pdf_error"]:
-        return "PDF failed"
+        return "paywalled" if p["pdf_error"].startswith(MISS) else "PDF failed"
     if p["pdf_source"]:
         return "PDF queued"
     # PubMed's pdf_url is the PMC page, which ingest_pdf refuses.
@@ -170,7 +171,7 @@ async def _fetch(query: str, *args: Any) -> list[dict[str, Any]]:
 
 
 _PAPERS_SQL = (
-    f"SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, p.pdf_url, "
+    f"SELECT p.id, p.source, p.source_id, p.title, p.authors, p.published_date, p.venue, p.pdf_url, p.doi, "
     "       p.parse_mode, p.importance, p.read_at, p.created_at, p.pdf_source, p.pdf_error, p.origin, "
     f"       {TRIAGE_OF_PAPER} AS triage, "
     "       (p.methods_summary IS NOT NULL AND p.results_summary IS NOT NULL) AS summarized, "
@@ -197,12 +198,13 @@ async def overview(request: Request):
     states: dict[str, int] = {}
     for p in papers:
         states[_paper_state(p)] = states.get(_paper_state(p), 0) + 1
+    paywalled = sum(1 for p in papers if p["origin"] != "sweep" and _paper_state(p) == "paywalled")
     digests = sorted(DIGEST_DIR.glob("*.md"), reverse=True)
     brief = await questions.daily_paper()
     earlier = await _fetch("SELECT d.*, p.title FROM daily_papers d JOIN papers p ON p.id = d.paper_id "
                            "WHERE d.day < $1 ORDER BY d.day DESC", date.today())
     return _page(request, "overview.html", counts=counts[0], states=states, pending=pending,
-                 system=system, config=_config(), last_digest=digests[0].name if digests else None,
+                 paywalled=paywalled, pdfs_running=await asyncio.to_thread(_pdfs_running), pdfs_unit=PDFS_UNIT, system=system, config=_config(), last_digest=digests[0].name if digests else None,
                  activity=await _activity(), activity_kinds=ACTIVITY, brief=brief, p=await get_paper(brief["paper_id"]) if brief else None,
                  earlier=earlier, models=questions.models(), default_model=questions.QUESTION_MODEL)
 
@@ -251,6 +253,16 @@ async def papers(request: Request):
     return await _papers_page(request, triage=False)
 
 
+@app.get("/papers/{paper_id}/library")
+async def library_page(paper_id: int):
+    """Opens the page of the publisher of a paper through the library login
+    (LIBRARY_LINK_PREFIX), else its DOI link."""
+    rows = await _fetch("SELECT doi FROM papers WHERE id = $1", paper_id)
+    if not rows or not rows[0]["doi"]:
+        raise HTTPException(404, f"Paper {paper_id} has no DOI.")
+    return RedirectResponse(await asyncio.to_thread(library_link, rows[0]["doi"]), 303)
+
+
 @app.get("/triage")
 async def triage_page(request: Request):
     """The papers that the sweep saved and the user did not keep or delete
@@ -271,7 +283,7 @@ async def _papers_page(request: Request, triage: bool):
             p["pertinence"] = pertinent.get(p["id"])
         rows.sort(key=lambda p: -(p["pertinence"] or 0))
         brief = await briefs.get("triage")
-    return _page(request, "papers.html", papers=rows, days=days, triage=triage, brief=brief)
+    return _page(request, "papers.html", library=bool(LIBRARY_LINK_PREFIX), papers=rows, days=days, triage=triage, brief=brief)
 
 
 @app.post("/papers/{paper_id}/keep")
@@ -315,7 +327,7 @@ async def paper(request: Request, paper_id: int):
     )
     folder = _paper_dir(paper_id)
     files = sorted(f.relative_to(folder) for f in folder.rglob("*") if f.is_file()) if folder.is_dir() else []
-    return _page(request, "paper.html", p=stored, queue=queue[0], chunks=chunks, hits=hits,
+    return _page(request, "paper.html", p=stored, queue=queue[0], miss=MISS, chunks=chunks, hits=hits,
                  files=[(str(f), (folder / f).stat().st_size) for f in files],
                  images=[str(f) for f in files if f.parts[0] == "images"],
                  text_file=next((str(f) for f in files if f.name.endswith(".pdf.md")), None))
@@ -359,8 +371,9 @@ UPLOAD_DIR = PAPERS_DIR.parent / "uploads"
 @app.post("/papers/upload")
 async def upload_pdf(request: Request, name: str, paper: Optional[int] = None):
     """The body is one PDF: it goes into the queue of its paper (`paper`, or
-    the paper that its DOI, arXiv ID or title finds, or a new paper), and
-    the ingest starts (ADR-0031)."""
+    the paper that its DOI, arXiv ID or title finds, or a new paper)
+    (ADR-0031). The button "Parse the queue now" or the Monday batch parses
+    it on a VM (ADR-0036)."""
     content = await request.body()
     if not content.startswith(b"%PDF"):
         raise HTTPException(422, f"{name} is not a PDF.")
@@ -368,20 +381,29 @@ async def upload_pdf(request: Request, name: str, paper: Optional[int] = None):
     path = UPLOAD_DIR / f"{datetime.now():%Y%m%d-%H%M%S}-{re.sub(r'[^\w.-]', '_', Path(name).name)}"
     path.write_bytes(content)
     report = (await queue_local_pdfs([path], paper))[0].replace(f"{path}: ", f"{name}: ")
-    return {"report": report, "started": await asyncio.to_thread(_start_ingest)}
+    return {"report": report}
 
 
-def _start_ingest() -> bool:
-    """Starts `phdcode ingest`, then `phdcode summarize`, as the transient
-    user unit phdcode-ingest, which a restart of the interface does not stop.
-    False if it runs already."""
-    # ponytail: a PDF queued while the unit runs waits for the next upload or the daily sweep.
-    if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "phdcode-ingest"]).returncode == 0:
-        return False
-    phdcode = Path(sys.executable).parent / "phdcode"
-    subprocess.run(["systemd-run", "--user", "--unit", "phdcode-ingest", "--collect", "--quiet", "-p", "Nice=10",
-                    "/bin/sh", "-c", f"{phdcode} ingest; {phdcode} summarize"], check=True)
-    return True
+PDFS_UNIT = f"phdcode-pdfs-now-{CLONE.name}"
+
+
+def _pdfs_running() -> bool:
+    return subprocess.run(["systemctl", "--user", "is-active", "--quiet", PDFS_UNIT]).returncode == 0
+
+
+@app.post("/pdfs/run")
+async def run_pdfs():
+    """The button "Parse the queue now": `pdfs` (fetch, then the queue on a
+    VMQ VM), then `summarize`, as a transient user unit, which a restart of
+    the interface does not stop (ADR-0036). started is False if it runs
+    already."""
+    if await asyncio.to_thread(_pdfs_running):
+        return {"started": False}
+    steps = "; ".join(f"{sys.executable} -m llm_engine.cli {step}" for step in ("pdfs", "summarize"))
+    await asyncio.to_thread(subprocess.run, ["systemd-run", "--user", "--unit", PDFS_UNIT, "--collect", "--quiet",
+                                             "-p", "Nice=10", "-p", f"WorkingDirectory={CLONE}",
+                                             "/bin/sh", "-c", steps], check=True)
+    return {"started": True}
 
 
 async def _bin_days() -> int:

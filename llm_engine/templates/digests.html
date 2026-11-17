@@ -25,7 +25,7 @@ details.day[open] > summary { margin-bottom: 8px; }
 {% block main %}
 <h1>Digests</h1>
 {% if not days %}
-<div class="panel muted">No digests yet. The daily sweep writes one each day, when a saved search exists and the sweep timer is installed.</div>
+<div class="panel muted">No digests yet. The weekly sweep writes one each week, when a saved search exists and the sweep timer is installed.</div>
 {% endif %}
 {% for d in days %}
 <details class="panel day" id="{{ d.date }}"{{ " open" if d.name == open_day }}>
