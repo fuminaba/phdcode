@@ -31,7 +31,7 @@ from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 
-from . import ask, briefs, gpu, puzzles, questions, writing
+from . import ask, briefs, deepread, gpu, puzzles, questions, writing
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
@@ -275,10 +275,13 @@ async def _papers_page(request: Request, triage: bool):
 
 
 @app.post("/papers/{paper_id}/keep")
-async def keep(paper_id: int):
+async def keep(paper_id: int, keep: bool = True):
     """Moves a paper from triage to the papers: it becomes the user's, so
-    triage reads its title from now on (ADR-0018, ADR-0032)."""
-    await _update_paper(paper_id, "origin = $2", None)
+    triage reads its title from now on (ADR-0018, ADR-0032). keep=false moves
+    it back to triage and clears its importance, which would keep it in the
+    library (questions._STUDY_PAPERS)."""
+    await _update_paper(paper_id, "origin = $2::text, importance = CASE WHEN $2::text IS NULL THEN importance END",
+                        None if keep else "sweep")
 
 
 @app.post("/briefs/{key}")
@@ -563,12 +566,13 @@ async def set_label(saved_search_id: int, source_id: str, label: bool | None = N
     return {"saved_search_id": saved_search_id, "source_id": source_id, "label": label}
 
 
-def _radar(values: list[float], width: int = 700, height: int = 300, rings: int = 4) -> dict[str, Any]:
+def _radar(values: list[float], width: int = 700, height: int = 300, rings: int = 4,
+           top: Optional[float] = None) -> dict[str, Any]:
     """The geometry of a radar chart in an SVG of width x height: for each
     axis its end, its value point and its label anchor; one polygon for each
-    ring. The scale is 0 to the largest value."""
+    ring. The scale is 0 to top, by default the largest value."""
     cx, cy, r, n = width / 2, height / 2, height / 2 - 30, len(values)
-    top = max(values) or 1
+    top = top or max(values) or 1
     unit = [(math.sin(2 * math.pi * i / n), -math.cos(2 * math.pi * i / n)) for i in range(n)]
     return {
         "width": width, "height": height, "cx": cx, "cy": cy, "top": top,
@@ -788,6 +792,84 @@ async def answer_puzzle(puzzle_id: int, request: Request):
         raise HTTPException(404, str(e))
     except Exception as e:  # the model server is stopped, or the reply is not valid
         raise HTTPException(503, f"No score: {e}")
+
+
+@app.get("/deepread")
+async def deepread_page(request: Request, s: int = 0, paper: int = 0):
+    """s: the session to show; else the latest unfinished one. paper: the
+    paper chosen in the form of a new session (ADR-0034)."""
+    sessions = await _fetch("SELECT s.*, p.title, (SELECT avg(score) FROM deepread_messages m "
+                            "WHERE m.session_id = s.id) AS mean FROM deepread_sessions s "
+                            "JOIN papers p ON p.id = s.paper_id ORDER BY s.id DESC")
+    current = next((x for x in sessions if x["id"] == s), None) if s else next(
+        (x for x in sessions if not x["finished_at"]), None)
+    if s and current is None:
+        raise HTTPException(404, f"No session has id {s}.")
+    messages = await _fetch("SELECT * FROM deepread_messages WHERE session_id = $1 ORDER BY id",
+                            current["id"]) if current else []
+    stats = deepread.stats(await _fetch("SELECT skill, area, score FROM deepread_messages WHERE score IS NOT NULL"))
+    return _page(request, "deepread.html", current=current, messages=messages,
+                 items={m["item"]: m for m in messages if m["area"]},
+                 graded_sessions=sum(1 for x in sessions if x["finished_at"]),
+                 history=[x for x in sessions if x is not current], papers=await deepread.papers(), paper=paper,
+                 stats=stats, radar=_radar([mean or 0 for _, mean in stats["skills"].values()], top=10),
+                 brush_up=questions.brush_up([x for x in reversed(sessions) if x["finished_at"]]),
+                 skills=deepread.SKILLS, areas=deepread.AREAS, questions=deepread.QUESTIONS,
+                 models=questions.models(), default_model=deepread.DEEPREAD_MODEL)
+
+
+@app.post("/deepread/new")
+async def new_deepread(request: Request):
+    """{"paper_id", "model"}: a new session with the examiner's first question."""
+    body = await _model_body(request, "model")
+    try:
+        return {"id": await deepread.start(int(body.get("paper_id") or 0), body.get("model"))}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # the model failed, or the reply is not valid
+        raise HTTPException(503, f"No session: {e}")
+
+
+@app.post("/deepread/{session_id}/reply")
+async def reply_deepread(session_id: int, request: Request):
+    """{"message"}: an answer, or a question back; saved with the examiner's reply."""
+    message = ((await request.json()).get("message") or "").strip()
+    if not message:
+        raise HTTPException(422, "The message is empty.")
+    try:
+        await deepread.reply(session_id, message)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except Exception as e:  # the model failed, or the reply is not valid
+        raise HTTPException(503, f"No reply; your message is not saved: {e}")
+    return {}
+
+
+@app.post("/deepread/{session_id}/restart")
+async def restart_deepread(session_id: int):
+    """Deletes the session and starts a new one on the same paper."""
+    try:
+        return {"id": await deepread.restart(session_id)}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # the model failed, or the reply is not valid
+        raise HTTPException(503, f"No new session; the old one stays: {e}")
+
+
+@app.post("/deepread/{session_id}/finish")
+async def finish_deepread(session_id: int):
+    """Grades the session (again), and marks the paper as read."""
+    try:
+        await deepread.finish(session_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except Exception as e:  # the model failed, or the reply is not valid
+        raise HTTPException(503, f"No grade: {e}")
+    return {}
 
 
 async def _ask_calls() -> list[dict[str, Any]]:

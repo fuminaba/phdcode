@@ -339,3 +339,68 @@ def puzzle_grade_prompt(puzzle: dict, answer: str, results: Optional[list], know
         "improve the answer most, with a short example if it helps. Do not "
         "repeat the reference answer in full." + review_topics_instruction(known_topics)
     )
+
+
+def deepread_prompt(conversation: str, areas: dict[str, str], area_counts: dict[str, int],
+                    skill: Optional[str], asked: int, limit: int) -> str:
+    # The examiner of a deep read (ADR-0034). skill: the skill of a new
+    # question, or None when the session has its limit of questions. The
+    # paper is in the system message (generate's context).
+    area_lines = "\n".join(f"- {k}: {v} ({area_counts[k]} asked)" for k, v in areas.items())
+    if skill is None:
+        new = (f"The session has its {limit} questions: ask no new question. Answer a "
+               "question of the student, else thank the student in one sentence and "
+               "say to press Finish (asks = \"none\").")
+    else:
+        new = (f"Else ask a new question (asks = \"new\"), question {asked + 1} of "
+               f"{limit}, that tests this skill of critical reading: {skill}. Put "
+               "it in one of the areas, preferring an area with fewer questions "
+               "asked, and give that area in area. Ask what a careful reviewer "
+               "asks: about the parts that carry the main claim (the key design "
+               "choices, the main results, the main threats to validity), not a "
+               "detail that only tests memory, such as one sentence of the "
+               "introduction or a number that does not matter to the claim. Name "
+               "a section, table or figure only when the question is about it.")
+    return (
+        "You examine a PhD student in medical image analysis with machine "
+        "learning for oncology on the paper that you have, which the student has read. "
+        "Find out how well the student understands the paper and can read it "
+        f"critically.\n\nThe areas of the questions:\n{area_lines}\n\n"
+        f"The conversation so far:\n{conversation or '(none: ask the first question)'}\n\n"
+        "Write the next message of the examiner. Ask one question at a time, "
+        "never two. Do not give the answer to a question and do not grade it: "
+        "the grade comes at the end.\n"
+        "If the student's last message answers your question but is vague, "
+        "incomplete or wrong, ask one follow-up on the same point (asks = "
+        "\"follow-up\"); at most two follow-ups on one question. If the student "
+        "names a limitation, check it against the paper; if the paper deals "
+        "with it, say where and ask the student to judge that answer.\n"
+        "If the student asks you a question, answer it briefly from the paper, "
+        "then repeat your question (asks = \"follow-up\") or ask nothing (asks = "
+        f"\"none\").\n{new}\n"
+        "Keep the message under 120 words, in Markdown."
+    )
+
+
+def deepread_grade_prompt(conversation: str, items: list[str], known_topics: list[str]) -> str:
+    # The grade of a deep read (ADR-0034). items: "item N: skill: what it covers".
+    item_lines = "\n".join(f"- {i}" for i in items)
+    return (
+        "You grade the oral exam of a PhD student on the paper that you have. The "
+        "examiner asked questions; the student answered, and sometimes asked "
+        f"questions back.\n\nThe exam:\n{conversation}\n\n"
+        f"Grade each of these items, each on its skill of critical reading:\n{item_lines}\n\n"
+        "An item is a question with its follow-ups and the student's messages "
+        "until the next question. Score 0 to 10 for correctness against the "
+        "paper and for the depth of the critical reading: 8 to 10 for an "
+        "answer that an examiner accepts without change. A question that the "
+        "student asked back is not a wrong answer, but an answer that needed "
+        "the examiner's help scores lower. In items, give one object for each "
+        "item: {\"item\": N, \"score\": 0-10, \"feedback\": \"...\"}. The "
+        "feedback is Markdown, 2 to 4 sentences: what was right, what was "
+        "wrong or missing. For each correction, quote the paper word for word "
+        "in double quotes, at least 5 words, so that the student can find the "
+        "place. In summary, write 3 to 5 sentences on the student's "
+        "understanding and critical reading of this paper, with the strongest "
+        "and the weakest skill." + review_topics_instruction(known_topics)
+    )

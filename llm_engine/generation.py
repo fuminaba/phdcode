@@ -27,6 +27,7 @@ def generate(
         model_name: Optional[str] = None,
         schema: Optional[dict[str, Any]] = None,
         thinking: bool = True,
+        context: Optional[str] = None,
 ) -> str | dict[str, Any]:
     """One chat completion through the route of model_name.
 
@@ -43,6 +44,12 @@ def generate(
     thinking=False asks the chat template for no reasoning (enable_thinking;
     Qwen-style templates such as Bonsai's read it, others ignore it) and
     uses temperature 0: a short judgement that repeats (triage).
+
+    context: a long text that stays the same over several calls (the paper
+    of a deep read). It goes first in the system message, so that the
+    prompt cache of the route can reuse it: with claude -p, a second turn on
+    a paper of 22 000 tokens read 22 075 from the cache and wrote 509
+    (2026-10-31); in the user message, it read 0.
     """
     model_name = model_name or SUMMARY_MODEL
     if not model_name:
@@ -55,6 +62,8 @@ def generate(
         reply_model = create_model("Reply", **schema)
         instruction = json_schema_instruction(json.dumps(reply_model.model_json_schema()))
         messages.insert(0, {"role": "system", "content": instruction})
+    if context is not None:
+        messages.insert(0, {"role": "system", "content": context})
 
     if route.provider == "claude-code":
         content = _claude(route, messages)

@@ -78,6 +78,7 @@
     <p><b>An examiner could ask:</b></p><ul>{% for k in brief.examiner_questions %}<li>{{ k }}</li>{% endfor %}</ul>
     <p class="muted">Written by {{ brief.model or "?" }} from the abstract and the summaries. Check a number in the paper before you quote it.</p>
   </details>
+  {% if p.parse_mode %}<p><a href="/deepread?paper={{ p.id }}">Deep read: let a model examine you on this paper</a></p>{% endif %}
   <div class="models" style="margin-top:10px">
     <label>Model <select id="question-model">{% for m in models %}<option{{ " selected" if m == default_model }}>{{ m }}</option>{% endfor %}</select></label>
     <button class="go alt" id="new">Another paper</button> <span class="msg bad"></span>

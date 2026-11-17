@@ -5,6 +5,7 @@
 <h1>{{ p.title or "(no title)" }}</h1>
 {% if p.deleted_at %}<div class="panel warn">This paper is in the <a href="/bin">bin</a> since {{ p.deleted_at|when }}. Restore it from the bin.</div>{% endif %}
 {% if p.origin == "sweep" and not p.deleted_at %}<div class="panel">This paper waits in <a href="/triage">triage</a>. <button type="button" class="go" onclick="post(this, '/papers/{{ p.id }}/keep', {})">Keep it</button> moves it to Papers and into your library. <span class="msg bad"></span></div>{% endif %}
+{% if p.origin != "sweep" and not p.deleted_at %}<p class="muted" style="font-size:13px">In your library. <button type="button" class="go alt" onclick="confirm('Move this paper back to triage? Its importance is cleared, so it leaves your library until you keep it again.') && post(this, '/papers/{{ p.id }}/keep?keep=false', {})">Move back to triage</button> <span class="msg bad"></span></p>{% endif %}
 
 <div class="panel">
   <div>{{ p.authors|join(", ") or "(no authors)" }}</div>
@@ -26,6 +27,8 @@
     <span id="importance-error" class="bad"></span>
   </div>
   <label style="display:block;margin-top:8px"><input type="checkbox" id="read"{{ " checked" if p.read_at }}> I have read this paper</label>
+  {# The model is the one last chosen on the page Deep read (this browser), else DEEPREAD_MODEL. #}
+  {% if p.chunks %}<p style="margin:8px 0 0"><button type="button" class="go" onclick="let model = null; try { model = localStorage.getItem('deepread-model'); } catch {} post(this, '/deepread/new', {paper_id: {{ p.id }}, model}, '/deepread')">Start a deep read</button> <span class="muted">a model examines you on this paper</span> <span class="msg bad"></span></p>{% endif %}
 </div>
 
 <h2>My notes</h2>

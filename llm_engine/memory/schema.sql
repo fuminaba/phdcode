@@ -325,3 +325,32 @@ CREATE TABLE IF NOT EXISTS puzzle_attempts (
     graded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS puzzle_attempts_puzzle_idx ON puzzle_attempts (puzzle_id);
+
+-- Deep read (ADR-0034): an exam on one full-text paper. Each message has the
+-- number of its item (a new question with its follow-ups and the answers);
+-- the examiner row that opens an item has its area and skill, and after
+-- "Finish" its score (0 to 10), feedback and checked quotes
+-- ([{{"quote", "found"}}]).
+CREATE TABLE IF NOT EXISTS deepread_sessions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    paper_id BIGINT NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+    model TEXT NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ,
+    summary TEXT,
+    review_topics TEXT[]
+);
+CREATE TABLE IF NOT EXISTS deepread_messages (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    session_id BIGINT NOT NULL REFERENCES deepread_sessions(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('examiner', 'student')),
+    content TEXT NOT NULL,
+    item INT NOT NULL,
+    area TEXT,
+    skill TEXT,
+    score INT CHECK (score BETWEEN 0 AND 10),
+    feedback TEXT,
+    quotes JSONB,
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS deepread_messages_session_idx ON deepread_messages (session_id);
