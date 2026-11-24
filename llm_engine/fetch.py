@@ -20,13 +20,12 @@ publisher is a miss of that link only.
 import asyncio
 import json
 import logging
-import os
 import re
 import urllib.request
 from collections.abc import Iterator
 from datetime import date
 from typing import Any, Optional
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import requests
 
@@ -104,34 +103,9 @@ def _openalex_pdfs(doi: str) -> list[str]:
     return [loc["pdf_url"] for loc in (work or {}).get("locations") or [] if loc.get("pdf_url")]
 
 
-# The prefix of the library login, for a person who opens a paywalled paper in
-# a browser (UBC: https://go.openathens.net/redirector/ubc.ca?url=). Empty: the
-# DOI link. Only a deployment whose use the licences of the library allow sets it.
-LIBRARY_LINK_PREFIX = os.getenv("LIBRARY_LINK_PREFIX", "")
-
-
-def _landing(doi: str, stream: bool = False) -> requests.Response:
-    """The landing page of doi: doi.org redirects to the page of the publisher."""
-    return requests.get(f"https://doi.org/{doi}", headers=_HEADERS, timeout=30, stream=stream)
-
-
-def library_link(doi: str) -> str:
-    """The link that opens the page of doi through the library login. The
-    login takes the URL of the publisher, not a DOI, so one request to doi.org
-    finds that URL; a 403 of the publisher to this client still gives it."""
-    if not LIBRARY_LINK_PREFIX:
-        return f"https://doi.org/{doi}"
-    try:
-        with _landing(doi, stream=True) as response:
-            url = response.url
-    except requests.RequestException:
-        url = f"https://doi.org/{doi}"
-    return LIBRARY_LINK_PREFIX + quote(url, safe="")
-
-
 def _publisher_pdf(doi: str) -> Optional[str]:
     try:
-        response = _landing(doi)
+        response = requests.get(f"https://doi.org/{doi}", headers=_HEADERS, timeout=30)
     except requests.RequestException:
         return None
     tag = _META.search(response.text) if response.ok else None

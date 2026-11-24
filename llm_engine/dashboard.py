@@ -24,9 +24,10 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
@@ -35,7 +36,7 @@ from . import CLONE, ask, briefs, deepread, gpu, puzzles, questions, writing
 from .documents import PAPERS_DIR
 from .embeddings import EMBEDDING_MODEL
 from .generation import SUMMARY_MODEL
-from .fetch import LIBRARY_LINK_PREFIX, MISS, library_link
+from .fetch import MISS
 from .memory import close_pool, get_paper, get_pool, pending_papers, queue_local_pdfs
 from .memory.db import HITS_JOIN, TRIAGE_OF_PAPER, add_saved_search, cancel_saved_search, update_saved_search
 from .memory.document_index import CHUNK_OVERLAP, CHUNK_SIZE, MAP_CHUNK_SIZE
@@ -84,6 +85,29 @@ _link_cites = lambda html: Markup(_CITE.sub(r'<a href="/papers/\1">[P\1]</a>', h
 templates.env.filters["cite_links"] = lambda text: _link_cites(str(escape(text or "")))
 templates.env.filters["md_cites"] = lambda text: _link_cites(_markdown.render(text or ""))
 templates.env.globals["importance_levels"] = IMPORTANCE
+
+# The OpenURL resolver of the library (UBC eLink): for a citation it lists the
+# licensed full text, through the library login, and interlibrary loan
+# (ADR-0036). Only a deployment whose use the licences allow sets it.
+LIBRARY_RESOLVER = os.getenv("LIBRARY_RESOLVER", "")
+
+
+def library_url(p: dict[str, Any]) -> Optional[str]:
+    """The link of a paper at the library: its DOI, else its title and venue;
+    without a resolver, the DOI link."""
+    if not LIBRARY_RESOLVER:
+        return f"https://doi.org/{p['doi']}" if p.get("doi") else None
+    if p.get("doi"):
+        query = {"rft_id": f"info:doi/{p['doi']}"}
+    elif p.get("title"):
+        query = {"rft.atitle": p["title"], "rft.jtitle": p.get("venue") or "", "rft.date": str(p.get("published_date") or "")[:4]}
+    else:
+        return None
+    return f"{LIBRARY_RESOLVER}?{urlencode({'ctx_ver': 'Z39.88-2004', **query})}"
+
+
+templates.env.globals["library_url"] = library_url
+templates.env.globals["library_resolver"] = bool(LIBRARY_RESOLVER)
 templates.env.globals["zip"] = zip
 # The model menu of a brief (brief.html).
 templates.env.globals["model_names"] = questions.models
@@ -253,16 +277,6 @@ async def papers(request: Request):
     return await _papers_page(request, triage=False)
 
 
-@app.get("/papers/{paper_id}/library")
-async def library_page(paper_id: int):
-    """Opens the page of the publisher of a paper through the library login
-    (LIBRARY_LINK_PREFIX), else its DOI link."""
-    rows = await _fetch("SELECT doi FROM papers WHERE id = $1", paper_id)
-    if not rows or not rows[0]["doi"]:
-        raise HTTPException(404, f"Paper {paper_id} has no DOI.")
-    return RedirectResponse(await asyncio.to_thread(library_link, rows[0]["doi"]), 303)
-
-
 @app.get("/triage")
 async def triage_page(request: Request):
     """The papers that the sweep saved and the user did not keep or delete
@@ -283,7 +297,7 @@ async def _papers_page(request: Request, triage: bool):
             p["pertinence"] = pertinent.get(p["id"])
         rows.sort(key=lambda p: -(p["pertinence"] or 0))
         brief = await briefs.get("triage")
-    return _page(request, "papers.html", library=bool(LIBRARY_LINK_PREFIX), papers=rows, days=days, triage=triage, brief=brief)
+    return _page(request, "papers.html", papers=rows, days=days, triage=triage, brief=brief)
 
 
 @app.post("/papers/{paper_id}/keep")
@@ -399,7 +413,7 @@ async def run_pdfs():
     already."""
     if await asyncio.to_thread(_pdfs_running):
         return {"started": False}
-    steps = "; ".join(f"{sys.executable} -m llm_engine.cli {step}" for step in ("pdfs", "summarize"))
+    steps = "; ".join(f"{sys.executable} -m llm_engine.cli {step}" for step in ("pdfs", "summarize --vm"))
     await asyncio.to_thread(subprocess.run, ["systemd-run", "--user", "--unit", PDFS_UNIT, "--collect", "--quiet",
                                              "-p", "Nice=10", "-p", f"WorkingDirectory={CLONE}",
                                              "/bin/sh", "-c", steps], check=True)

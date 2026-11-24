@@ -14,5 +14,5 @@ Type=oneshot
 # then the backup. Each step runs also if a step before it fails, and the unit
 # fails when one step failed, so that the monitor shows it on the same day.
 EnvironmentFile=%E/phdcode/env
-ExecStart=/bin/sh -c 'rc=0; for step in sweep headscore pdfs summarize backup; do "${PHDCODE_ENV}/bin/phdcode" "$$step" || { echo "phdcode $$step failed" >&2; rc=1; }; done; exit $$rc'
+ExecStart=/bin/sh -c 'rc=0; for step in sweep headscore pdfs "summarize --vm" backup; do "${PHDCODE_ENV}/bin/phdcode" $$step || { echo "phdcode $$step failed" >&2; rc=1; }; done; exit $$rc'
 Nice=10

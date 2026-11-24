@@ -19,14 +19,14 @@ phdcode reads its settings from `.env` at the root of the repository. A variable
 | --- | --- | --- |
 | `LLM_ROUTING` | none | The model routes: for each model name, its OpenAI-compatible endpoint and key. Set `'local': false` for a hosted model, so that the GPU rules do not count it as a GPU tenant. `'provider': 'claude-code'` calls Claude through the Claude Code command (`claude -p`) on the account that is logged in there, with no endpoint and no API key, for example `'claude-haiku-5-5': {'provider': 'claude-code', 'local': false}`. See `llm_engine/routes.py`. |
 | `DEFAULT_SERVER_IP` | none | The base URL of the Ollama server for a model name that has no route, for example `http://localhost:11434` (phdcode adds `/v1`). |
-| `SUMMARY_MODEL` | `AGENT_BACKEND` | The model of the methods and results summaries, and of the metadata of a local PDF. |
+| `SUMMARY_MODEL` | `AGENT_BACKEND` | The model of the methods and results summaries, and of the metadata of a local PDF. `summarize --vm` uses it below 20 pending papers; from 20 on, the route `bonsai2-27b-vm` (ADR-0037): `{'host_endpoint': 'http://127.0.0.1:<port>/v1', 'api_key': '-', 'local': false}` in `LLM_ROUTING`, a different port in each clone (the SSH tunnel to the VM). |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | The Ollama embedding model. It runs on the CPU. |
 | `EMBEDDING_DIM` | `768` | The dimension of the embeddings. It must match `EMBEDDING_MODEL`. A change needs new embeddings for all papers. |
 | `QUESTION_MODEL` | `SUMMARY_MODEL` | The default model that writes the daily questions and their model answers (ADR-0020); the page Questions can choose another route of `LLM_ROUTING`, local or hosted. |
 | `GRADE_MODEL` | `QUESTION_MODEL` | The default model that grades the answers; the page can choose another. |
 | `SYSONE_DIR`, `SYSONE_PYTHON` | none | The absolute paths of the repository of the System One head and of the Python that runs it (ADR-0028). With none, `phdcode headscore` scores nothing. |
 | `DEEPREAD_MODEL` | `claude-sonnet-5-5` | The default model of Deep read (ADR-0034), which examines and grades a session; the page can choose another route of `LLM_ROUTING`. |
-| `LIBRARY_LINK_PREFIX` | none | The prefix of the library login for the paywalled papers on the page Papers (ADR-0036), for example `https://go.openathens.net/redirector/ubc.ca?url=` at UBC. With none, a paper opens at its DOI link. Set it only in a deployment whose use the licences of the library allow. |
+| `LIBRARY_RESOLVER` | none | The OpenURL resolver of the library for the paywalled papers on the page Papers (ADR-0036), for example `https://GW2JH3XR2C.search.serialssolutions.com/` (UBC eLink). With none, a paper opens at its DOI link. Set it only in a deployment whose use the licences of the library allow. |
 | `BRIEF_MODEL` | `claude-haiku-5-5` | The LLM that writes the briefs (ADR-0032): the interests paragraph, the triage brief and the summary of findings of each day of the digest. A route of `LLM_ROUTING`; the menu of each brief can choose another for one brief. |
 | `TRIAGE_MODEL` | `SUMMARY_MODEL` | The LLM that judges each hit of the sweep: does the student with this library want it? If its server cannot answer (the GPU is cleared for training), the hits wait for the next sweep. |
 

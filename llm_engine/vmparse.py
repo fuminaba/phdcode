@@ -7,7 +7,8 @@ results become full-text papers (parse_mode "balanced") of this library.
 3. One VMQ job with each PDF of the queue (a URL, or a local upload).
 4. Wait for the job, then import its results.
 
-The VM makes no summaries: phdcode summarize makes them after this command.
+The VM makes no summaries: phdcode summarize makes them after this command,
+for a large batch on a second VM, the Bonsai 2 service (bonsai_vm, ADR-0037).
 The state of each job is in its folder, CODE_DIR/<library>-<time>/:
 manifest.tsv, parse.sh, job.yaml, then job_id (submitted), then imported.
 """
@@ -21,6 +22,9 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -31,6 +35,7 @@ from .documents import PAPERS_DIR, text_path_for
 from .fetch import MISS, RETRY_DAYS, fetch_pdfs
 from .memory import db
 from .memory.document_index import index_text
+from .routes import resolve
 
 log = logging.getLogger(__name__)
 
@@ -112,25 +117,92 @@ def submit(folder: Path) -> str:
     return job_id
 
 
-def wait(folder: Path) -> tuple[str, Optional[Path]]:
-    """Waits until VMQ ends the job of folder: (state, results folder, or
-    None when VMQ has no such job). The clock starts when the job leaves the
-    queue (VMQ runs one job at a time, and a GPU can be out of stock); a job
-    still queued after QUEUED_H, or still running after max_hours + 1 h,
-    returns its state, and the next run waits for it again."""
-    job_id = (folder / "job_id").read_text().strip()
-    hours = json.loads((folder / "job.yaml").read_text())["max_hours"]
+def _wait(job_id: str, hours: float, ends: tuple[str, ...]) -> tuple[str, str]:
+    """Waits until the VMQ job is in a state of ends: (state, the last column
+    of vmq.py jobs: the results folder, or the IP of a serving job). The
+    clock starts when the job leaves the queue (VMQ runs one job at a time,
+    and a GPU can be out of stock): QUEUED_H in the queue, then hours. At
+    the deadline: (the state, "")."""
     deadline = time.time() + QUEUED_H * 3600
     started = False
     while True:
-        state, results = _jobs().get(job_id, ("missing", ""))
-        if state in ("done", "failed", "missing"):
-            return state, Path(results) if results else None
+        state, last = _jobs().get(job_id, ("missing", ""))
+        if state in ends:
+            return state, last
         if state != "queued" and not started:
-            started, deadline = True, time.time() + (hours + 1) * 3600
+            started, deadline = True, time.time() + hours * 3600
         if time.time() > deadline:
-            return state, None
+            return state, ""
         time.sleep(WAIT_S)
+
+
+def wait(folder: Path) -> tuple[str, Optional[Path]]:
+    """Waits until VMQ ends the job of folder: (state, results folder, or
+    None when VMQ has no such job). A job still queued after QUEUED_H, or
+    still running after max_hours + 1 h, returns its state, and the next run
+    waits for it again."""
+    hours = json.loads((folder / "job.yaml").read_text())["max_hours"]
+    state, results = _wait((folder / "job_id").read_text().strip(), hours + 1, ("done", "failed", "missing"))
+    return state, Path(results) if results else None
+
+
+# The summaries of a large batch (ADR-0037): Bonsai 2 on a VMQ service VM
+# (profile bonsai), which both clones share; its folder holds job.yaml, job_id
+# and the lock. The port of the tunnel is the one of the route BONSAI_MODEL in
+# LLM_ROUTING, a different port in each clone.
+BONSAI_DIR = Path.home() / ".local/share/phdcode/bonsai"
+BONSAI_MODEL, BONSAI_SLOTS, VM_MIN_PAPERS = "bonsai2-27b-vm", 8, 20
+BONSAI_SETUP_H = 0.5
+SSH_KEY = Path.home() / ".ssh/hyperstack-ifumiyi-key.pem"  # the key of VMQ
+BONSAI_JOB = {"name": "phdcode-bonsai", "profile": "bonsai", "run": "true",
+              "service": {"idle_hours": 0.5,
+                          "busy": "curl -s 127.0.0.1:8081/slots | grep -q '\"is_processing\":true'"}}
+
+
+def _tunnel(ip: str, port: int) -> subprocess.Popen:
+    return subprocess.Popen(["ssh", "-N", "-i", str(SSH_KEY), "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
+                             "-o", "StrictHostKeyChecking=accept-new", "-o", "ServerAliveInterval=30",
+                             "-L", f"{port}:127.0.0.1:8081", f"ubuntu@{ip}"], stdin=subprocess.DEVNULL)
+
+
+@contextmanager
+def bonsai_vm() -> Iterator[None]:
+    """The Bonsai 2 service of VMQ through an SSH tunnel to the port of the
+    route BONSAI_MODEL. A queued, running or serving job is reused, else a new
+    one is submitted. The VM stops by itself after 30 min with no request
+    (the idle stop of VMQ), so the other clone can reuse it. Raises
+    RuntimeError when the job fails, or does not serve in time."""
+    port = urlsplit(resolve(BONSAI_MODEL).endpoint).port
+    BONSAI_DIR.mkdir(parents=True, exist_ok=True)
+    with open(BONSAI_DIR / "lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # the other clone may submit at the same time
+        job_file = BONSAI_DIR / "job_id"
+        job_id = job_file.read_text().strip() if job_file.exists() else ""
+        if _jobs().get(job_id, ("missing", ""))[0] not in ("queued", "running", "serving"):
+            (BONSAI_DIR / "job.yaml").write_text(json.dumps(BONSAI_JOB, indent=2) + "\n")
+            try:
+                job_id = submit(BONSAI_DIR)
+            except subprocess.CalledProcessError as e:  # for example, the credit is below the worst case
+                raise RuntimeError(f"VMQ refused the Bonsai VM: {(e.stderr or e.stdout).strip()[-300:]}") from e
+    state, ip = _wait(job_id, BONSAI_SETUP_H, ("serving", "done", "failed", "missing"))
+    if state != "serving" or not ip:
+        raise RuntimeError(f"the Bonsai VM (VMQ job {job_id}) is {state}, not serving; see vmq.py jobs")
+    tunnel = _tunnel(ip, port)
+    try:
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5).close()
+                break
+            except OSError:
+                if tunnel.poll() is not None:
+                    raise RuntimeError(f"the SSH tunnel to the Bonsai VM {ip} closed (exit code {tunnel.returncode})")
+                time.sleep(2)
+        else:
+            raise RuntimeError(f"the Bonsai VM {ip} does not answer on the tunnel")
+        yield
+    finally:
+        tunnel.terminate()
+        tunnel.wait()
 
 
 async def import_results(folder: Path, results: Optional[Path]) -> list[str]:

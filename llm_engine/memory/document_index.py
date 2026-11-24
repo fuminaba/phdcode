@@ -357,7 +357,7 @@ def download_pdf(url: str) -> bytes:
     return response.content
 
 
-_DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>]+")
+_DOI_RE = re.compile(r"10\.\d{4,9}/(?:\r?\n)?[^\s\"<>]+")  # a PDF can break the line after the slash
 _ARXIV_RE = re.compile(r"arXiv:\s*(\d{4}\.\d{4,5})")
 
 
@@ -381,7 +381,7 @@ async def paper_for_pdf(path: Path) -> tuple[int, str]:
     pages = await asyncio.to_thread(first_pages, path)
     text = " ".join(pages)
     doi_match, arxiv_match = _DOI_RE.search(text), _ARXIV_RE.search(text)
-    doi = (doi_match.group(0).rstrip(".,;)]") if doi_match
+    doi = ("".join(doi_match.group(0).split()).rstrip(".,;)]") if doi_match
            else f"10.48550/arxiv.{arxiv_match.group(1)}" if arxiv_match else None)
     if doi and (paper_id := await find_paper_by_doi(doi)) is not None:
         return paper_id, f"stored paper, DOI {doi}"
@@ -464,15 +464,19 @@ async def run_model_steps(
     return failures
 
 
-async def run_pending_steps(model_name: Optional[str] = None) -> list[str]:
+async def run_pending_steps(model_name: Optional[str] = None, parallel: int = 1) -> list[str]:
     """Runs the model steps of each full-text paper that has a pending
-    step. Returns one line for each paper."""
-    report = []
-    for paper in await pending_papers():
-        text = Path(paper["text_path"]).read_text()
-        failures = await run_model_steps(paper["id"], text, paper["needs_metadata"], model_name)
-        report.append(f"paper {paper['id']}: " + ("; ".join(failures) if failures else "done"))
-    return report
+    step, `parallel` papers at a time (the slots of the model server).
+    Returns one line for each paper, in the order of the papers."""
+    gate = asyncio.Semaphore(parallel)
+
+    async def one(paper: dict) -> str:
+        async with gate:
+            text = Path(paper["text_path"]).read_text()
+            failures = await run_model_steps(paper["id"], text, paper["needs_metadata"], model_name)
+            return f"paper {paper['id']}: " + ("; ".join(failures) if failures else "done")
+
+    return list(await asyncio.gather(*(one(p) for p in await pending_papers())))
 
 
 async def _parse_pdf(pdf_path: Path) -> Path:
@@ -585,4 +589,5 @@ if __name__ == "__main__":
     page = "Br J Cancer (2021) 124:686; https://doi.org/10.1038/s41416-020-01122-x. arXiv:2004.09666v2 [cs.CV]"
     assert _DOI_RE.search(page).group(0).rstrip(".,;)]") == "10.1038/s41416-020-01122-x"
     assert _ARXIV_RE.search(page).group(1) == "2004.09666"
+    assert _DOI_RE.search("doi.org/10.1038/\r\ns41577-020-0306-5\r\nReVIeWs").group(0) == "10.1038/\r\ns41577-020-0306-5"
     print("pdf ids: ok")

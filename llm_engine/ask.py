@@ -62,7 +62,7 @@ async def answer(question: str, model: str) -> str:
     read, with its own MCP config: phdcode with TOOLS only.
 
     The server runs over stdio (an empty PHDCODE_MCP_PORT: the unit of
-    Lib-B sets it for its HTTP server) and imports the code of this clone
+    a second deployment sets it for its HTTP server) and imports the code of this clone
     (PYTHONPATH): from the temporary folder, the alira env imports the PhD
     clone, and with it the .env and the database of that clone."""
     prompt = PROMPT.format(question=question)

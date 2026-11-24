@@ -13,5 +13,5 @@ After=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=%E/phdcode/mcp-%i.env
-ExecStart=/bin/sh -c 'cd "$PHDCODE_DIR" || exit 1; rc=0; for step in pdfs summarize; do "$PHDCODE_ENV/bin/python" -m llm_engine.cli "$$step" || { echo "phdcode $$step failed" >&2; rc=1; }; done; exit $$rc'
+ExecStart=/bin/sh -c 'cd "$PHDCODE_DIR" || exit 1; rc=0; for step in pdfs "summarize --vm"; do "$PHDCODE_ENV/bin/python" -m llm_engine.cli $$step || { echo "phdcode $$step failed" >&2; rc=1; }; done; exit $$rc'
 Nice=10

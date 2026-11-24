@@ -1,6 +1,6 @@
 # ADR-0036: A weekly batch of the open-access PDFs, parsed on a GPU VM
 
-**Status:** Accepted — 2026-11-16
+**Status:** Accepted — 2026-11-16. Item 6 (Haiku) superseded by [ADR-0037](0037-summaries-on-a-bonsai-vm.md) on 2026-11-17.
 **Supersedes:** the rejected alternative "download of open-access PDFs during the sweep" of [ADR-0015](0015-rescope-to-literature-rag-tool.md), and its daily sweep (item 6)
 **Amends:** [ADR-0017](0017-gpu-main-slot.md) (the batch parses in balanced mode on a VM, not on the GPU of the server); [ADR-0031](0031-interface-tabs-uploads-and-saved-searches.md) (an upload only joins the queue)
 
@@ -9,7 +9,7 @@
 ADR-0015 rejected the download of open-access PDFs during the sweep: "It puts
 work on the GPU that nobody asked for." That premise is no longer true. Fumi
 asks for it (2026-11-16): both libraries are mostly abstract-only (the PhD
-library 318 of 365 papers, Lib-B 224 of 224), and an abstract gives the
+library 318 of 365 papers, the second library 224 of 224), and an abstract gives the
 Ask page and the agents little to quote.
 
 Most of these papers have a free PDF. arXiv papers have a direct link. PubMed
@@ -83,10 +83,11 @@ RTX A4000 (19 pages in 28 s, about $0.025 for a test job, 2026-11-15).
 8. **Paywalled papers: a download by hand.** A paper of the library (not of
    triage) with a dated miss has the state "paywalled" on the page Papers
    (`/papers?filter=paywalled`, the link of the Overview). Its row has a link
-   to the page of the publisher through the library login
-   (`LIBRARY_LINK_PREFIX`, UBC OpenAthens) and an upload button. phdcode resolves the DOI to the URL of
-   the publisher at the click, because the login takes that URL, not a DOI.
-   No login goes into a script.
+   to the OpenURL resolver of the library (`LIBRARY_RESOLVER`, UBC eLink) with
+   the DOI, else the title and the venue, and an upload button. The resolver
+   lists the licensed full text through the library login, also at an
+   aggregator, and interlibrary loan. A DOI link through the OpenAthens prefix
+   failed for old publisher URLs (2026-11-17). No login goes into a script.
 
 ## Consequences
 

@@ -14,6 +14,11 @@
    pdfs() does nothing; a refused job sends its URL
    papers back to the fetch; an accepted job is held, waited for (queued,
    running, done) and imported.
+5. run_pending_steps(parallel=3) runs 3 papers at once and keeps their order
+   in the report (fake model steps).
+6. bonsai_vm() with VMQ stubbed and a local stand-in for the SSH tunnel: it
+   submits the service job, waits until serving, opens the tunnel, reuses a
+   serving job, and raises for a failed job.
 
     export DATABASE_URL="${DATABASE_URL%/*}/phdcode_test"   # before Python starts
     export LOG_DIR=<an absolute folder under the home folder>   # VMQ copies only code under home
@@ -21,19 +26,24 @@
 """
 import asyncio
 import fcntl
+import http.server
 import json
 import os
 import shutil
 import subprocess
 import sys
+import threading
+import urllib.request
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 assert os.environ.get("DATABASE_URL", "").endswith("/phdcode_test"), "Set DATABASE_URL to phdcode_test first."
 assert os.environ.get("LOG_DIR", "").startswith("/"), "Set LOG_DIR to an absolute folder first."
 
 from llm_engine import fetch, vmparse  # noqa: E402  (after the checks)
-from llm_engine.memory import db  # noqa: E402
+from llm_engine.memory import db, document_index  # noqa: E402
+from llm_engine.routes import resolve  # noqa: E402
 
 SEP = "-" * 48
 TEXT = (f"{{0}}{SEP}\n\n# Methods\n\nWe parse each PDF on a GPU VM with marker. It runs once a week.\n\n"
@@ -159,6 +169,81 @@ async def main() -> None:
         for i in mine:
             assert await column(pool, "parse_mode", i) == "balanced"
             assert (await column(pool, "pdf_source", i)).startswith("vmq:phdcode_test-"), "held until the import"
+
+        # 5. The summaries of several papers at once, in the order of the papers (fake model steps).
+        running, most = 0, 0
+
+        async def fake_steps(paper_id, text, needs_metadata, model_name):
+            nonlocal running, most
+            running += 1
+            most = max(most, running)
+            await asyncio.sleep(0.05 * (6 - paper_id))  # the later papers end first
+            running -= 1
+            return [] if paper_id != 3 else ["methods: the model failed"]
+        text = log_dir / "text.md"
+        text.write_text("text")
+        document_index.pending_papers = lambda: asyncio.sleep(0, [{"id": n, "text_path": str(text), "needs_metadata": False}
+                                                                 for n in range(1, 6)])
+        document_index.run_model_steps = fake_steps
+        report = await document_index.run_pending_steps("bonsai2-27b-vm", parallel=3)
+        assert report == [f"paper {n}: done" if n != 3 else "paper 3: methods: the model failed" for n in range(1, 6)], report
+        assert most == 3, most
+
+        # 6. The Bonsai VM: submit, wait until serving, open the tunnel, reuse a serving job.
+        port = urlsplit(resolve(vmparse.BONSAI_MODEL).endpoint).port
+        vmparse.BONSAI_DIR = log_dir / "bonsai"
+        states = iter(["queued", "running", "serving"])
+        submitted = []
+
+        def vmq2(*args):
+            if args[0] == "submit":
+                submitted.append(json.loads(Path(args[1]).read_text()))
+                return "  n3-L40x1 in CANADA-1: ok\n20990103-000000 /results/\n"
+            state = next(states, "serving")
+            return f"20990103-000000 phdcode-bonsai {state} {'10.0.0.9' if state == 'serving' else ''}\n"
+
+        class Health(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200 if self.path == "/health" else 404)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        class FakeTunnel:  # stands for ssh -L: a local server that answers /health
+            def __init__(self, ip, tunnel_port):
+                assert (ip, tunnel_port) == ("10.0.0.9", port), (ip, tunnel_port)
+                self.server = http.server.HTTPServer(("127.0.0.1", port), Health)
+                threading.Thread(target=self.server.serve_forever, daemon=True).start()
+                self.returncode = None
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                self.server.shutdown()
+                self.server.server_close()
+
+            def wait(self):
+                pass
+        vmparse._vmq, vmparse._tunnel = vmq2, FakeTunnel
+        for _ in range(2):  # the second use finds the serving job: no second submit
+            with vmparse.bonsai_vm():
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5).close()
+        assert len(submitted) == 1 and submitted[0]["profile"] == "bonsai" and "service" in submitted[0], submitted
+        vmparse._vmq = lambda *args: ("  ok\n20990104-000000 /results/\n" if args[0] == "submit"
+                                      else "20990104-000000 phdcode-bonsai failed /results/\n")
+        try:
+            with vmparse.bonsai_vm():
+                raise AssertionError("a failed job must not serve")
+        except RuntimeError as e:
+            assert "job 20990104-000000) is failed" in str(e), e
+        vmparse._vmq = refuse  # a refused submit is a RuntimeError too: the papers stay pending
+        try:
+            with vmparse.bonsai_vm():
+                raise AssertionError("a refused job must not serve")
+        except RuntimeError as e:
+            assert "VMQ refused the Bonsai VM: vmq: no flavor fits" in str(e), e
     finally:
         await pool.execute("DELETE FROM chunks WHERE paper_id IN (SELECT id FROM papers WHERE source_id LIKE 'test-vm-%')")
         await pool.execute("DELETE FROM papers WHERE source_id LIKE 'test-vm-%'")

@@ -20,6 +20,7 @@
 """
 import argparse
 import asyncio
+import contextlib
 import logging
 import sys
 from pathlib import Path
@@ -45,7 +46,9 @@ def main() -> None:
     commands.add_parser("pdfs", help="fetch, then parse the PDF queue on a VMQ GPU VM and import it (ADR-0036)")
     ingest = commands.add_parser("ingest", help="parse each PDF in the queue; then run phdcode summarize")
     ingest.add_argument("--limit", type=int, help="parse at most this many PDFs")
-    commands.add_parser("summarize", help="make the pending summaries through SUMMARY_MODEL")
+    summarize = commands.add_parser("summarize", help="make the pending summaries through SUMMARY_MODEL")
+    summarize.add_argument("--vm", action="store_true",
+                           help="from 20 pending papers on: Bonsai 2 on a VMQ VM, 8 papers at a time (ADR-0037)")
     commands.add_parser("headscore", help="the shadow score of the System One head for each judged hit (ADR-0028)")
     rechunk = commands.add_parser("rechunk", help="index the parsed text of the full-text papers again (no parse)")
     rechunk.add_argument("paper_ids", type=int, nargs="*", help="only these papers")
@@ -92,8 +95,19 @@ def main() -> None:
                         "systemctl --user stop phdcode-llm-proxy.service")
         print("\n".join(asyncio.run(_with_db(ingest_queue(args.limit)))) or "The PDF queue is empty.")
     elif args.command == "summarize":
-        from .memory import run_pending_steps
-        print("\n".join(asyncio.run(_with_db(run_pending_steps()))) or "No pending papers.")
+        from .memory import pending_papers, run_pending_steps
+        model, parallel = None, 1  # SUMMARY_MODEL, one paper at a time
+        if args.vm:
+            from .vmparse import BONSAI_MODEL, BONSAI_SLOTS, VM_MIN_PAPERS, bonsai_vm
+            pending = len(asyncio.run(_with_db(pending_papers())))
+            if pending >= VM_MIN_PAPERS:
+                model, parallel = BONSAI_MODEL, BONSAI_SLOTS
+        try:
+            with (bonsai_vm() if model else contextlib.nullcontext()):
+                report = asyncio.run(_with_db(run_pending_steps(model, parallel)))
+        except RuntimeError as e:  # the VM failed: the papers stay pending for the next run
+            raise SystemExit(f"No summaries: {e}")
+        print("\n".join(report) or "No pending papers.")
     elif args.command == "rechunk":
         from .memory import rechunk
         print("\n".join(asyncio.run(_with_db(rechunk(args.paper_ids or None)))) or "No full-text papers.")
