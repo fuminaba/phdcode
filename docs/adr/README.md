@@ -49,6 +49,7 @@ superseded most of them. Read 0006 and 0014 to 0028 for the current design.
 | [0035](0035-mcp-over-http-for-another-user.md) | MCP over HTTP with a token, for a client of another Linux user | Accepted |
 | [0036](0036-fetch-open-access-pdfs.md) | A weekly batch of the open-access PDFs, parsed on a GPU VM | Accepted |
 | [0037](0037-summaries-on-a-bonsai-vm.md) | The summaries of a large batch run on Bonsai 2 on a transient GPU VM | Accepted |
+| [0038](0038-a-read-only-replica-for-a-team.md) | A read-only replica of a library for a team | Accepted |
 
 An ADR is valid while its premises are true. To re-open one, name the premise
 that changed, and supersede it in a new ADR. Edit only the status line of the

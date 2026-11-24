@@ -1,0 +1,4 @@
+# The build context is the repo root: send only the code (never .env or logs/).
+*
+!llm_engine
+llm_engine/**/__pycache__

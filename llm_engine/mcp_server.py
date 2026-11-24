@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 import requests
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
 from . import CLONE, sources
@@ -407,24 +408,54 @@ async def cancel_saved_search(saved_search_id: int) -> str:
     return f"Saved search {saved_search_id} is cancelled."
 
 
+_GOOD: dict[bytes, float] = {}
+
+
+def _authorized(header: bytes, url: str, now=time.time) -> bool:
+    """A personal token of a team: the URL (PHDCODE_MCP_AUTH_URL, an endpoint
+    of the team that knows its people) answers 200 for it. A good token is
+    kept for 10 min, at most 1000 of them; any failure refuses."""
+    if not header.startswith(b"Bearer ") or len(header) > 300:
+        return False
+    if now() - _GOOD.get(header, 0) < 600:
+        return True
+    try:
+        ok = requests.get(url, headers={"Authorization": header.decode("latin-1")}, timeout=10).status_code == 200
+    except requests.RequestException:
+        return False
+    if ok:
+        if len(_GOOD) >= 1000:
+            _GOOD.clear()
+        _GOOD[header] = now()
+    return ok
+
+
 def _serve_http(port: int) -> None:
     """MCP over HTTP on 127.0.0.1. Every local user can reach the port, so
-    the token is the only check: refuse to start without one, or with the
-    code of another clone (its .env would give another database)."""
+    the token is the only check: refuse to start without one (or without
+    PHDCODE_MCP_AUTH_URL, the check of personal tokens), or with the code of
+    another clone (its .env would give another database)."""
     import uvicorn  # only the HTTP mode needs it
 
-    token = os.getenv("PHDCODE_MCP_TOKEN", "")
-    if len(token) < 32:
-        raise SystemExit("PHDCODE_MCP_PORT needs PHDCODE_MCP_TOKEN of 32 characters or more.")
+    token, auth_url = os.getenv("PHDCODE_MCP_TOKEN", ""), os.getenv("PHDCODE_MCP_AUTH_URL", "")
+    if not auth_url and len(token) < 32:
+        raise SystemExit("PHDCODE_MCP_PORT needs PHDCODE_MCP_TOKEN of 32 characters or more, or PHDCODE_MCP_AUTH_URL.")
     code = CLONE
     if code != Path(os.getenv("PHDCODE_DIR", "")).resolve():
         raise SystemExit(f"The code is from {code}, not from PHDCODE_DIR. Start the server in PHDCODE_DIR.")
     expected = f"Bearer {token}".encode()
-    app = server.streamable_http_app()
+    # Behind a proxy the Host header is the public name: the SDK allows only localhost by default (HTTP 421).
+    hosts = list(filter(None, os.getenv("PHDCODE_MCP_HOSTS", "").split(",")))
+    app = server.streamable_http_app(transport_security=TransportSecuritySettings(
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *hosts],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", *(f"https://{h}" for h in hosts)],
+    ) if hosts else None)
 
     async def check_token(scope, receive, send):
-        if scope["type"] == "http" and not hmac.compare_digest(
-            dict(scope["headers"]).get(b"authorization", b""), expected
+        header = dict(scope.get("headers", [])).get(b"authorization", b"")
+        if scope["type"] == "http" and not (
+            await asyncio.to_thread(_authorized, header, auth_url) if auth_url
+            else hmac.compare_digest(header, expected)
         ):
             await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"text/plain")]})
             await send({"type": "http.response.body", "body": b"Unauthorized"})

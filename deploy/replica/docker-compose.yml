@@ -1,0 +1,44 @@
+# A read-only replica of a phdcode library: Postgres with pgvector, Ollama for the query embeddings, and the MCP
+# server with the read tools only. README.md in this folder. Every port is on 127.0.0.1 of the host.
+#   docker compose --env-file /etc/phdcode-replica/replica.env up -d --build
+name: phdcode-replica
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg16   # the versions of the writer: pg_restore needs the same pgvector or newer
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: phdcode
+      POSTGRES_DB: phdcode
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?the env file sets POSTGRES_PASSWORD}
+    ports: ["127.0.0.1:${DB_PORT:-5442}:5432"]
+    volumes: [db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phdcode -d phdcode"]
+      interval: 5s
+      retries: 10
+    mem_limit: 1g
+    cpus: 1
+  ollama:
+    image: ollama/ollama:0.32.15          # the version of the writer, so that a query embeds as the papers did
+    restart: unless-stopped
+    ports: ["127.0.0.1:${OLLAMA_PORT:-11444}:11434"]
+    volumes: [ollama:/root/.ollama]
+    mem_limit: 2g
+    cpus: 2
+  mcp:
+    build: {context: ../.., dockerfile: deploy/replica/Dockerfile}
+    restart: unless-stopped
+    network_mode: host                    # the server listens on 127.0.0.1 of the host; the auth URL is on the host
+    depends_on: {db: {condition: service_healthy}}
+    environment:
+      DATABASE_URL: postgresql://phdcode:${POSTGRES_PASSWORD}@127.0.0.1:${DB_PORT:-5442}/phdcode
+      DEFAULT_SERVER_IP: http://127.0.0.1:${OLLAMA_PORT:-11444}   # the route of the embedding model (routes.py)
+      PHDCODE_MCP_PORT: ${MCP_PORT:-8772}
+      PHDCODE_MCP_AUTH_URL: ${MCP_AUTH_URL:?the env file sets MCP_AUTH_URL}
+      PHDCODE_MCP_HOSTS: ${MCP_HOSTS:-}   # the public name of the proxy
+      PHDCODE_TOOLS: search_sources,get_paper,search_papers,search_chunks,get_chunks   # no tool that writes
+    mem_limit: 1g
+    cpus: 1
+volumes:
+  db:
+  ollama:

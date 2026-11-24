@@ -53,6 +53,8 @@ After a change to the chunk settings, run `phdcode rechunk`.
 | Variable | Default | What it sets |
 | --- | --- | --- |
 | `DASHBOARD_URL` | `http://localhost:8620` | The address of the interface. The MCP tools use it for the links to figures. |
+| `PHDCODE_MCP_AUTH_URL` | none | MCP over HTTP: a URL that checks the personal token of each request (ADR-0038), an endpoint of the team that knows its people. A 200 lets the request in. It replaces `PHDCODE_MCP_TOKEN`, the one shared token. |
+| `PHDCODE_MCP_HOSTS` | none | MCP over HTTP behind a proxy: the public host names, comma-separated, that the MCP SDK accepts in the Host header besides localhost (else it answers 421). |
 | `UVICORN_HOST` | `127.0.0.1` | The address where the interface listens. The interface has no login: use a private address only, for example the Tailscale address. |
 
 ## The systemd units

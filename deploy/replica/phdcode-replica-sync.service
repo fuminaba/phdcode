@@ -1,0 +1,9 @@
+# The replica: pull and swap in the newest dump (sync.sh). Installed by README.md, step 4.
+[Unit]
+Description=phdcode replica: pull the newest dump of the writer
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/phdcode/deploy/replica/sync.sh

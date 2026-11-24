@@ -1,6 +1,6 @@
 # Status
 
-**Updated:** 2026-11-17 (Deep read, ADR-0034, and the PDF batch, ADR-0036)
+**Updated:** 2026-11-24 (the read-only replica of a library, ADR-0038)
 
 <!--
 CONVENTION -- read before editing.
@@ -33,6 +33,7 @@ what changed and why (commit messages), the design (docs/adr/0015 to 0017).
 
 ## In progress
 
+- **The read-only replica (ADR-0038)** passed its rehearsal on the writer machine with the real dump (2026-11-24; the rehearsal was removed). No replica is installed yet. `phdcode-publish@<name>.timer` is not enabled yet.
 - **MCP over HTTP (ADR-0035)**, committed in `acb7ab1`. A second deployment runs: its own clone, `phdcode-mcp@<name>` on 127.0.0.1:8625, its own database. It has no sweep or backup: those units read `%E/phdcode/env`, the `.env` of this clone. Its weekly PDF batch (`pdfs`, `summarize`) runs in `phdcode-pdfs@<name>.timer` (ADR-0036).
 - **The sweep timer works:** the sweeps of 2026-10-23 and 2026-10-24 at 06:00 PDT finished (`journalctl --user -u phdcode-sweep.service`).
 - **The briefs (ADR-0032)** are tested on `phdcode_test` with a fake model, and live with Claude Haiku 5.5 (`BRIEF_MODEL`, the default): the interests and triage briefs, 10 to 11 s each. No digest summary is written yet: the first comes from the sweep of 2026-10-25 06:00 PDT, through `claude -p` in the sweep unit (not tested from that unit; the page Ask runs it from the interface unit).

@@ -1,0 +1,12 @@
+# The writer of a replica (deploy/replica/README.md): phdcode-publish@<name>, env file %E/phdcode/publish-<name>.env.
+#
+#   systemctl --user link <repo>/llm_engine/systemd/phdcode-publish@.service <repo>/llm_engine/systemd/phdcode-publish@.timer
+#   systemctl --user enable --now phdcode-publish@<name>.timer
+[Unit]
+Description=phdcode publish (%i): upload the dump of the library to its replica, when it changed
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%E/phdcode/publish-%i.env
+ExecStart=/bin/sh -c 'exec "$PHDCODE_DIR/deploy/replica/publish.sh"'

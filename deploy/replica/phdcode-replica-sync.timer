@@ -1,0 +1,9 @@
+[Unit]
+Description=phdcode replica: daily pull, one hour after the publish of the writer
+
+[Timer]
+OnCalendar=*-*-* 17:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
